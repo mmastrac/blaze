@@ -1,0 +1,17 @@
+[package]
+name = "vt-emulator"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.0", features = ["derive"] }
+type-mapper = "0.1.2"
+bytemuck = { version = "1.23", features = ["derive"] }
+paste = "1"
+i8051 = { path = "../i8051/crates/i8051" }
+
+[dev-dependencies]
+tempfile = "3.0"
+
+[[example]]
+name = "disassemble-rom"
