@@ -1,0 +1,88 @@
+ROM:
+    # Shared code in both banks
+    
+    # Conditional set bank and call
+    0x0030: bit_set_rom_bank_and_call
+    0x10030: bit_set_rom_bank_and_call
+    # Unconditional clear bank and call
+    0x0050: clear_rom_bank_and_call
+    0x10050: clear_rom_bank_and_call
+    # Conditional check and call
+    0x0066: bit_clear_rom_bank_and_call
+    0x10066: bit_clear_rom_bank_and_call
+    # Jump to common jump table
+    0x0081: jump_to_table_0x100_function
+    0x10081: jump_to_table_0x100_function
+    # Jump to table at address
+    0x0084: jump_to_table_function
+    0x10084: jump_to_table_function
+    # Unconditional set bank and jump
+    0x009b: set_rom_bank_and_jump
+    0x1009b: set_rom_bank_and_jump
+    # Unconditional clear bank and jump
+    0x00ab: clear_rom_bank_and_jump
+    0x100ab: clear_rom_bank_and_jump
+
+    # Jump tables
+    0x0100: bank_0_jump_table
+    0x10100: bank_1_jump_table
+
+RAM:
+    0x182: rotation_and_language_settings
+
+    0x7ef3: ???
+
+    # DUART registers (2681)
+    0x7fe0: duart_mode_register_a
+    0x7fe1:
+        r: duart_status_register_a
+        w: duart_clock_select_register_a
+    0x7fe2:
+        r: duart_brg_extend
+        w: duart_command_register_a
+    0x7fe3:
+        r: duart_rx_holding_register_a
+        w: duart_tx_holding_register_a
+    0x7fe4:
+        r: duart_input_port_change_register
+        w: duart_aux_control_register
+    0x7fe5:
+        r: duart_interrupt_status_register
+        w: duart_interrupt_mask_register
+    0x7fe6:
+        r: duart_counter_timer_upper_value
+        w: duart_counter_timer_upper_preset
+    0x7fe7:
+        r: duart_counter_timer_lower_value
+        w: duart_counter_timer_lower_preset
+    0x7fe8: duart_mode_register_b
+    0x7fe9:
+        r: duart_status_register_b
+        w: duart_clock_select_register_b
+    0x7fea:
+        r: duart_1x_16x_test
+        w: duart_command_register_b
+    0x7feb:
+        r: duart_rx_holding_register_b
+        w: duart_tx_holding_register_b
+    0x7fec: duart_scratch_pad
+    0x7fed:
+        r: duart_input_port_change_register
+        w: duart_output_port_conf_register
+    0x7fee:
+        r: duart_start_counter_command
+        w: duart_set_output_port_bits_command
+    0x7fef:
+        r: duart_stop_counter_command
+        w: duart_reset_output_port_bits_command
+
+    # Video/memory controller
+    0x7ff3: video_controller_swizzle_mask
+    0x7ff4: video_controller_swizzle_mask_2
+    # Bit 2: ROM bank select
+    0x7ff5: rom_bank_select
+    0x7ff6: video_controller_status_register
+
+    0xa992: current_row_high_byte
+    0xa994: current_row_index
+    0xa998: ???
