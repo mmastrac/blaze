@@ -4,7 +4,7 @@ use i8051::peripheral::Serial;
 use std::collections::VecDeque;
 use std::io::{IsTerminal, stdout};
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tracing::{Level, info, trace};
 
 mod memory;
@@ -313,71 +313,116 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     cpu.sfr_set(SFR_P3, 1 << 3, &mut context);
 
-    // CPU execution loop
-    loop {
-        if let Ok(value) = out_kbd.try_recv() {
-            // trace!("KBD: {:02X}", value);
-            kbd_queue.push_back(value);
-
-            match kbd_queue.front().unwrap() {
-                // Ping?
-                0x55 => {
-                    trace!("KBD: Ping");
-                    kbd_queue.pop_front();
-                    _ = in_kbd.send(1);
-                    _ = in_kbd.send(0);
-                    _ = in_kbd.send(0);
-                    _ = in_kbd.send(0);
+    if args.debug {
+        use i8051_debug_tui::{Debugger, DebuggerState, crossterm};
+        let mut debugger = Debugger::new(Default::default())?;
+        debugger.enter()?;
+        let mut instruction_count = 0_usize;
+        loop {
+            match debugger.debugger_state() {
+                DebuggerState::Quit => {
+                    debugger.exit()?;
+                    break;
                 }
-                0x11 | 0x13 => {
-                    if kbd_queue.len() >= 2 {
-                        trace!("KBD: LED state");
-                        kbd_queue.pop_front();
-                        kbd_queue.pop_front();
+                DebuggerState::Paused => {
+                    debugger.render(&cpu, &mut context)?;
+                    let event = crossterm::event::poll(Duration::from_millis(100))?;
+                    if event {
+                        let event = crossterm::event::read()?;
+                        if debugger.handle_event(event, &mut cpu, &mut context) {
+                            cpu.step(&mut context);
+                            debugger.render(&cpu, &mut context)?;
+                        }
                     }
                 }
-                0x99 => {
-                    trace!("KBD: disable click");
-                    kbd_queue.pop_front();
-                    _ = in_kbd.send(0xba);
-                }
-                0xAB => {
-                    trace!("KBD: Request ID");
-                    kbd_queue.pop_front();
-                    _ = in_kbd.send(1);
-                    _ = in_kbd.send(0);
-                }
-                0xE1 => {
-                    trace!("KBD: Disable repeat");
-                    kbd_queue.pop_front();
-                    _ = in_kbd.send(0xba);
-                }
-                0xE3 => {
-                    trace!("KBD: Enable repeat");
-                    kbd_queue.pop_front();
-                    _ = in_kbd.send(0xba);
-                }
-                0xFD => {
-                    trace!("KBD: Power-up");
-                    kbd_queue.pop_front();
-                    _ = in_kbd.send(1);
-                    _ = in_kbd.send(0);
-                    _ = in_kbd.send(0);
-                    _ = in_kbd.send(0);
-                }
-                _ => {
-                    trace!("KBD (unknown): {:02X}", value);
-                    kbd_queue.clear();
-                    _ = in_kbd.send(0xB6);
+                DebuggerState::Running => {
+                    instruction_count += 1;
+                    if instruction_count % 0x10000 == 0 {
+                        debugger.render(&cpu, &mut context)?;
+                        let event = crossterm::event::poll(Duration::from_millis(0))?;
+                        if event {
+                            let event = crossterm::event::read()?;
+                            if debugger.handle_event(event, &mut cpu, &mut context) {
+                                cpu.step(&mut context);
+                                debugger.render(&cpu, &mut context)?;
+                            }
+                        }
+                    }
+                    cpu.step(&mut context);
+                    if debugger.breakpoints().contains(&cpu.pc_ext(&context)) {
+                        debugger.pause();
+                    }
+                    breakpoints.run(true, &mut cpu, &mut context);
                 }
             }
         }
-        breakpoints.run(true, &mut cpu, &mut context);
-        // trace!("PC = 0x{:04X}", cpu.pc);
-        cpu.step(&mut context);
-        breakpoints.run(false, &mut cpu, &mut context);
+    } else {
+        // CPU execution loop
+        loop {
+            if let Ok(value) = out_kbd.try_recv() {
+                // trace!("KBD: {:02X}", value);
+                kbd_queue.push_back(value);
 
-        instruction_count += 1;
+                match kbd_queue.front().unwrap() {
+                    // Ping?
+                    0x55 => {
+                        trace!("KBD: Ping");
+                        kbd_queue.pop_front();
+                        _ = in_kbd.send(1);
+                        _ = in_kbd.send(0);
+                        _ = in_kbd.send(0);
+                        _ = in_kbd.send(0);
+                    }
+                    0x11 | 0x13 => {
+                        if kbd_queue.len() >= 2 {
+                            trace!("KBD: LED state");
+                            kbd_queue.pop_front();
+                            kbd_queue.pop_front();
+                        }
+                    }
+                    0x99 => {
+                        trace!("KBD: disable click");
+                        kbd_queue.pop_front();
+                        _ = in_kbd.send(0xba);
+                    }
+                    0xAB => {
+                        trace!("KBD: Request ID");
+                        kbd_queue.pop_front();
+                        _ = in_kbd.send(1);
+                        _ = in_kbd.send(0);
+                    }
+                    0xE1 => {
+                        trace!("KBD: Disable repeat");
+                        kbd_queue.pop_front();
+                        _ = in_kbd.send(0xba);
+                    }
+                    0xE3 => {
+                        trace!("KBD: Enable repeat");
+                        kbd_queue.pop_front();
+                        _ = in_kbd.send(0xba);
+                    }
+                    0xFD => {
+                        trace!("KBD: Power-up");
+                        kbd_queue.pop_front();
+                        _ = in_kbd.send(1);
+                        _ = in_kbd.send(0);
+                        _ = in_kbd.send(0);
+                        _ = in_kbd.send(0);
+                    }
+                    _ => {
+                        trace!("KBD (unknown): {:02X}", value);
+                        kbd_queue.clear();
+                        _ = in_kbd.send(0xB6);
+                    }
+                }
+            }
+            breakpoints.run(true, &mut cpu, &mut context);
+            // trace!("PC = 0x{:04X}", cpu.pc);
+            cpu.step(&mut context);
+            breakpoints.run(false, &mut cpu, &mut context);
+
+            instruction_count += 1;
+        }
     }
 
     let elapsed = start_time.elapsed();
