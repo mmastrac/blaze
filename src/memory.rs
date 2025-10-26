@@ -1,4 +1,3 @@
-use std::array;
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::fs;
@@ -8,7 +7,7 @@ use std::rc::Rc;
 
 use i8051::sfr::SFR_P2;
 use i8051::{CpuView, MemoryMapper, PortMapper, ReadOnlyMemoryMapper};
-use tracing::trace;
+use tracing::{info, trace};
 
 const READ_2681: &[&str] = &[
     "Mode Register A (MR1A, MR2A)",
@@ -401,14 +400,14 @@ impl MemoryMapper for RAM {
 
         match target {
             MemoryTarget::Mapper => {
-                trace!(
+                info!(
                     "Mapper write: 0x{:04X} = 0x{:02X} -> 0x{:02X} @ {pc:05X}",
                     addr, self.mapper[offset as usize], value
                 );
                 if offset == 0x5 && self.vram_page() ^ self.vram_page_value(value) != 0 {
                     let old = self.vram_page();
                     let new = self.vram_page_value(value);
-                    trace!("VIDEO: VRAM page changed: {} -> {}", old, new);
+                    info!("VIDEO: VRAM page changed: {} -> {}", old, new);
                     if old == 1 && new == 0 {
                         let font = &self.vram[0..];
                         std::fs::write("/tmp/font.bin", font).unwrap();
@@ -416,10 +415,10 @@ impl MemoryMapper for RAM {
                 }
 
                 if offset == 0x5 {
-                    trace!("Memory mapper bank write: {:02X}", value);
+                    info!("Memory mapper bank write: {:02X}", value);
                     let bank = (value & 0x4) != 0;
                     if bank != self.rom_bank.get() {
-                        trace!("RAM write bank changed: {}", bank as u8);
+                        info!("RAM write bank changed: {}", bank as u8);
                         self.rom_bank.set(bank);
                     }
                 }

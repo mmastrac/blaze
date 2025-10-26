@@ -104,6 +104,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2261d10cca569e4643e526d8dc2e62e433cc8aba21ab764233731f8d369bf394"
 
 [[package]]
+name = "blaze-vt"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "clap",
+ "i8051",
+ "i8051-debug-tui",
+ "paste",
+ "tempfile",
+ "tracing",
+ "tracing-subscriber",
+ "type-mapper",
+]
+
+[[package]]
 name = "bytemuck"
 version = "1.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -903,21 +918,6 @@ name = "valuable"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
-
-[[package]]
-name = "vt-emulator"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "clap",
- "i8051",
- "i8051-debug-tui",
- "paste",
- "tempfile",
- "tracing",
- "tracing-subscriber",
- "type-mapper",
-]
 
 [[package]]
 name = "wasi"

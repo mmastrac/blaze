@@ -59,12 +59,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             tracing_subscriber::fmt()
                 .with_max_level(level)
                 .event_format(format)
+                .log_internal_errors(false)
                 .init();
         } else {
             tracing_subscriber::fmt()
                 .with_ansi(false)
                 .with_max_level(level)
                 .event_format(format)
+                .log_internal_errors(false)
                 .init();
         }
     }
@@ -127,7 +129,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut breakpoints = Breakpoints::new();
 
     // Enable tracing if requested
-    if args.trace {
+    if args.trace && args.verbose {
         info!("Instruction tracing enabled");
         breakpoints.add(true, 0, Action::SetTraceInstructions(true));
         breakpoints.add(true, 0x10000, Action::SetTraceInstructions(true));
