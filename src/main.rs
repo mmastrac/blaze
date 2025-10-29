@@ -8,6 +8,8 @@ use std::io::{self, IsTerminal, stdout};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tracing::{Level, info, trace};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm;
@@ -17,7 +19,7 @@ mod video;
 
 use memory::{Bank, RAM, ROM, VideoProcessor};
 
-use i8051::{Cpu, DefaultPortMapper, sfr::*};
+use i8051::{Cpu, DefaultPortMapper, Register};
 
 use crate::memory::DiagnosticMonitor;
 
@@ -205,8 +207,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     breakpoints.add(true, 0x6ad9, Action::Log("Testing completed".to_string()));
     // breakpoints.add(true, 0x6ad9, Action::SetTraceInstructions(true));
     // Force tests to pass
-    breakpoints.add(true, 0x6ad9, Action::Set("PC".to_string(), 0x6b09));
-    breakpoints.add(true, 0x6ad9, Action::Set("B".to_string(), 0));
+    breakpoints.add(true, 0x6ad9, Action::Set(Register::PC, 0x6b09));
+    breakpoints.add(true, 0x6ad9, Action::Set(Register::B, 0));
 
     // Skip AD22 loop(s)
     // breakpoints.add(true, 0x950d, Action::Set("PC".to_string(), 0x951e));
@@ -324,11 +326,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     breakpoints.add(true, 0x16153, Action::Log("Keyboard test".to_string()));
 
     // Skip the KBD interrupt check: JB 21.3,LAB_RAM_001006
-    breakpoints.add(true, 0x11006, Action::Set("PC".to_string(), 0x1009));
+    breakpoints.add(true, 0x11006, Action::Set(Register::PC, 0x1009));
 
     // Skip EEPROM read
     // breakpoints.add(true, 0x1143, Action::SetTraceInstructions(true));
-    breakpoints.add(true, 0x5b6d, Action::Set("PC".to_string(), 0x5b8d));
+    breakpoints.add(true, 0x5b6d, Action::Set(Register::PC, 0x5b8d));
 
     // Enter setup?
     // breakpoints.add(false, 0x953d, Action::Run(Box::new(|cpu| {
@@ -348,6 +350,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.debug {
         use i8051_debug_tui::{Debugger, DebuggerState, crossterm};
         let mut debugger = Debugger::new(Default::default())?;
+        tracing_subscriber::registry()
+            .with(debugger.tracing_collector())
+            .init();
         debugger.enter()?;
         for breakpoint in args.breakpoint {
             debugger.breakpoints_mut().insert(breakpoint);
