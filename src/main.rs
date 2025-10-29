@@ -1,17 +1,25 @@
 use clap::Parser;
 use i8051::breakpoint::{Action, Breakpoints};
-use i8051::peripheral::Serial;
+use i8051::peripheral::{Serial, Timer};
+use ratatui::style::{Color, Style};
+use ratatui::text::{Span, Text};
 use std::collections::VecDeque;
-use std::io::{IsTerminal, stdout};
+use std::io::{self, IsTerminal, stdout};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tracing::{Level, info, trace};
 
-mod memory;
+use ratatui::backend::CrosstermBackend;
+use ratatui::crossterm;
 
-use memory::{Bank, RAM, ROM, VideoRow};
+mod memory;
+mod video;
+
+use memory::{Bank, RAM, ROM, VideoProcessor};
 
 use i8051::{Cpu, DefaultPortMapper, sfr::*};
+
+use crate::memory::DiagnosticMonitor;
 
 /// VT420 Terminal Emulator
 /// Emulates a VT420 terminal using an 8051 microcontroller
@@ -20,30 +28,39 @@ use i8051::{Cpu, DefaultPortMapper, sfr::*};
 #[command(about = "A VT420 terminal emulator using 8051 CPU emulation")]
 struct Args {
     /// Path to the ROM file
-    #[arg(short, long)]
+    #[arg(long)]
     rom: PathBuf,
 
+    /// Display the video output
+    #[arg(long)]
+    display: bool,
+
     /// Enable debugger
-    #[arg(short, long)]
+    #[arg(long)]
     debug: bool,
 
+    /// Breakpoints for debug mode, repeatable, parsed as hex
+    #[arg(long, value_parser = parse_hex_address)]
+    breakpoint: Vec<u32>,
+
     /// Enable instruction tracing
-    #[arg(short, long)]
+    #[arg(long)]
     trace: bool,
 
     /// Enable verbose output
     #[arg(short, long)]
     verbose: bool,
+}
 
-    /// ROM bank to use (0 = lower half, 1 = upper half)
-    #[arg(short, long, default_value = "0")]
-    bank: u8,
+fn parse_hex_address(s: &str) -> Result<u32, Box<dyn std::error::Error + Send + Sync>> {
+    Ok(u32::from_str_radix(s, 16)?)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
-    if args.debug {
+    if args.debug || args.display {
+        // ?
     } else {
         let level = if args.verbose {
             Level::TRACE
@@ -85,14 +102,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Loading ROM into memory...");
     let mut code = ROM::new(&args.rom, bank.bank.clone())?;
 
-    // Set the requested ROM bank
-    if args.bank <= 1 {
-        code.set_rom_bank(args.bank);
-    } else {
-        info!("Error: Bank must be 0 or 1, got {}", args.bank);
-        std::process::exit(1);
-    }
-
     info!("ROM loaded: {} bytes", code.rom_size());
     info!(
         "ROM banks: {} ({} bytes each)",
@@ -118,22 +127,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start_time = Instant::now();
     let mut instruction_count = 0;
 
-    let mut ram = RAM::new(bank.bank.clone());
+    let video_row = VideoProcessor::new();
+    let mut ram = RAM::new(bank.bank.clone(), video_row.sync.clone());
     let (mut serial, in_kbd, out_kbd) = Serial::new();
     let mut kbd_queue = VecDeque::new();
     let mut default = DefaultPortMapper::default();
 
-    let video_row = VideoRow::default();
-    let mut ports = (bank, (video_row, (serial, default)));
+    let diagnostic_monitor = DiagnosticMonitor::default();
+    let timer = Timer::default();
+    let mut ports = (
+        bank,
+        (video_row, (serial, (diagnostic_monitor, (timer, default)))),
+    );
 
     let mut breakpoints = Breakpoints::new();
 
     // Enable tracing if requested
-    if args.trace && args.verbose {
-        info!("Instruction tracing enabled");
-        breakpoints.add(true, 0, Action::SetTraceInstructions(true));
-        breakpoints.add(true, 0x10000, Action::SetTraceInstructions(true));
-    }
+    // if args.trace && args.verbose {
+    //     info!("Instruction tracing enabled");
+    //     breakpoints.add(true, 0, Action::SetTraceInstructions(true));
+    //     breakpoints.add(true, 0x10000, Action::SetTraceInstructions(true));
+    // }
 
     for addr in code.find_bank_dispatch() {
         breakpoints.add(
@@ -158,6 +172,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
+    breakpoints.add(true, 0x0, Action::Log("Interrupt: CPU reset".to_string()));
+    breakpoints.add(
+        true,
+        0x10000,
+        Action::Log("Interrupt: CPU reset".to_string()),
+    );
+    breakpoints.add(true, 0xB, Action::Log("Interrupt: Timer0".to_string()));
+    breakpoints.add(true, 0x10000, Action::Log("Interrupt: Timer0".to_string()));
+
     breakpoints.add(true, 0x5a88, Action::Log("Test failed!!!".to_string()));
     breakpoints.add(true, 0x5d5a, Action::Log("Testing failed!!!".to_string()));
 
@@ -171,7 +194,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     breakpoints.add(true, 0x10f0d, Action::Log("Update DUART bits".to_string()));
 
     breakpoints.add(true, 0x15ad0, Action::Log("Testing ROM Bank 1".to_string()));
-    breakpoints.add(true, 0x156, Action::Log("Testing ROM Bank 0".to_string()));
+    breakpoints.add(true, 0x20ca, Action::Log("Testing ROM Bank 0".to_string()));
     breakpoints.add(true, 0x15aeb, Action::Log("Testing phase 2".to_string()));
     breakpoints.add(true, 0x15b23, Action::Log("RAM test".to_string()));
     breakpoints.add(true, 0x15b8a, Action::Log("RAM test 2".to_string()));
@@ -179,21 +202,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     breakpoints.add(true, 0x1f51, Action::Log("Test result check".to_string()));
     breakpoints.add(true, 0x1f51, Action::TraceRegisters);
-    breakpoints.add(true, 0x1f51, Action::Set("B".to_string(), 0));
     breakpoints.add(true, 0x6ad9, Action::Log("Testing completed".to_string()));
     // breakpoints.add(true, 0x6ad9, Action::SetTraceInstructions(true));
     // Force tests to pass
     breakpoints.add(true, 0x6ad9, Action::Set("PC".to_string(), 0x6b09));
+    breakpoints.add(true, 0x6ad9, Action::Set("B".to_string(), 0));
 
-    // Skip AD22 loop
+    // Skip AD22 loop(s)
     // breakpoints.add(true, 0x950d, Action::Set("PC".to_string(), 0x951e));
-    breakpoints.add(true, 0x9513, Action::Set("PC".to_string(), 0x9516));
-
-    // breakpoints.add(true, 0x5fdb, Action::SetTraceInstructions(true));
-    // breakpoints.add(true, 0x5fdb, Action::SetTraceRegisters(true));
-    // breakpoints.add(true, 0x5f9e, Action::SetTraceInstructions(false));
-    // breakpoints.add(true, 0x5f9e, Action::SetTraceRegisters(false));
-    breakpoints.add(true, 0x5fe7, Action::TraceRegisters);
+    // breakpoints.add(true, 0x9513, Action::Set("PC".to_string(), 0x9516)); //works
+    // breakpoints.add(true, 0x9513, Action::Set("PC".to_string(), 0x951e));
+    // breakpoints.add(true, 0x957c, Action::Set("PC".to_string(), 0x9581));
+    // breakpoints.add(true, 0x3bae, Action::Set("PC".to_string(), 0x3bcb));
 
     breakpoints.add(true, 0x5521, Action::Log("Loading init string".to_string()));
     breakpoints.add(true, 0x5521, Action::TraceRegisters);
@@ -250,12 +270,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     breakpoints.add(true, 0x160f9, Action::TraceRegisters);
 
-    breakpoints.add(
-        true,
-        0x160c6,
-        Action::Log("Video latch test 3 (skip)".to_string()),
-    );
-    breakpoints.add(true, 0x160c6, Action::Set("PC".to_string(), 0x6118));
+    breakpoints.add(true, 0x160c6, Action::Log("Video latch test 3".to_string()));
 
     breakpoints.add(
         true,
@@ -274,34 +289,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         0x15cca,
         Action::Log("Wait for VSYNC (bank 1)".to_string()),
     );
-    breakpoints.add(true, 0x15cca, Action::Set("PC".to_string(), 0x5d28));
-
+    // breakpoints.add(
+    //     true,
+    //     0x15d11,
+    //     Action::Log("Wait for VSYNC #2 (bank 1)".to_string()),
+    // );
     breakpoints.add(
         true,
-        0x15c89,
-        Action::Log("Wait for VSYNC line (bank 1)".to_string()),
+        0x15cd4,
+        Action::Log("Wait for VSYNC failed (bank 1)".to_string()),
     );
-    breakpoints.add(true, 0x15c89, Action::Set("PC".to_string(), 0x5cc4));
+    breakpoints.add(
+        true,
+        0x15d26,
+        Action::Log("Wait for VSYNC complete (bank 1)".to_string()),
+    );
+    // breakpoints.add(true, 0x15cca, Action::Set("PC".to_string(), 0x5d28));
+
+    breakpoints.add(true, 0x15c89, Action::Log("Check VSYNC timing".to_string()));
+    breakpoints.add(
+        true,
+        0x15cc5,
+        Action::Log("Check VSYNC timing (failed)".to_string()),
+    );
+    // breakpoints.add(true, 0x15c89, Action::Set("PC".to_string(), 0x5cc4));
 
     breakpoints.add(
         true,
         0x2074,
         Action::Log("Wait for VSYNC (bank 0)".to_string()),
     );
-    breakpoints.add(true, 0x2074, Action::Set("PC".to_string(), 0x20c9));
+    // breakpoints.add(true, 0x2074, Action::Set("PC".to_string(), 0x20c9));
 
     breakpoints.add(true, 0x16153, Action::Log("Keyboard test".to_string()));
-
-    // breakpoints.add(true, 0x56c2, Action::SetTraceInstructions(true));
-    // breakpoints.add(true, 0x56c2, Action::SetTraceRegisters(true));
-
-    // breakpoints.add(true, 0x57F8, Action::Set("DPTR".to_string(), 0x5a4a));
-    // breakpoints.add(true, 0x5c3d, Action::Log("Waiting for EEPROM".to_string()));
-
-    breakpoints.add(true, 0x1C1B, Action::TraceRegisters);
-
-    // breakpoints.add(true, 0x7be2, Action::SetTraceInstructions(true));
-    // breakpoints.add(true, 0x7be2, Action::SetTraceRegisters(true));
 
     // Skip the KBD interrupt check: JB 21.3,LAB_RAM_001006
     breakpoints.add(true, 0x11006, Action::Set("PC".to_string(), 0x1009));
@@ -310,15 +330,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // breakpoints.add(true, 0x1143, Action::SetTraceInstructions(true));
     breakpoints.add(true, 0x5b6d, Action::Set("PC".to_string(), 0x5b8d));
 
+    // Enter setup?
+    // breakpoints.add(false, 0x953d, Action::Run(Box::new(|cpu| {
+    //     cpu.internal_ram_write(0x24, cpu.internal_ram(0x24) & (1 << 2));
+    //     cpu.internal_ram_write(0x24, cpu.internal_ram(0x24) & (1 << 1));
+    //     cpu.internal_ram_write(0x3b, 0);
+    // })));
+
+    // // Enter setup?
+    // breakpoints.add(false, 0x4308, Action::Run(Box::new(|cpu| {
+    //     cpu.internal_ram_write(0x3b, 0);
+    // })));
+
     let mut context = (ports, ram, code);
     info!("CPU initialized, PC = 0x{:04X}", cpu.pc_ext(&context));
-
-    cpu.sfr_set(SFR_P3, 1 << 3, &mut context);
 
     if args.debug {
         use i8051_debug_tui::{Debugger, DebuggerState, crossterm};
         let mut debugger = Debugger::new(Default::default())?;
         debugger.enter()?;
+        for breakpoint in args.breakpoint {
+            debugger.breakpoints_mut().insert(breakpoint);
+        }
         let mut instruction_count = 0_usize;
         loop {
             match debugger.debugger_state() {
@@ -332,7 +365,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if event {
                         let event = crossterm::event::read()?;
                         if debugger.handle_event(event, &mut cpu, &mut context) {
+                            breakpoints.run(true, &mut cpu, &mut context);
                             cpu.step(&mut context);
+                            context.0.1.1.0.tick();
+                            context.0.1.0.tick();
+                            let tick = context.0.1.1.1.1.0.prepare_tick(&mut cpu, &context);
+                            context.0.1.1.1.1.0.tick(&mut cpu, tick);
+                            breakpoints.run(false, &mut cpu, &mut context);
                             debugger.render(&cpu, &mut context)?;
                         }
                     }
@@ -350,15 +389,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                     }
+                    breakpoints.run(true, &mut cpu, &mut context);
                     cpu.step(&mut context);
+                    context.0.1.1.0.tick();
+                    context.0.1.0.tick();
+                    let tick = context.0.1.1.1.1.0.prepare_tick(&mut cpu, &context);
+                    context.0.1.1.1.1.0.tick(&mut cpu, tick);
+                    breakpoints.run(false, &mut cpu, &mut context);
                     if debugger.breakpoints().contains(&cpu.pc_ext(&context)) {
                         debugger.pause();
                     }
-                    breakpoints.run(true, &mut cpu, &mut context);
                 }
             }
         }
     } else {
+        let mut terminal = ratatui::Terminal::new(CrosstermBackend::new(stdout()))?;
+
+        if args.display {
+            crossterm::terminal::enable_raw_mode()?;
+            crossterm::execute!(io::stdout(), crossterm::terminal::EnterAlternateScreen,)?;
+            terminal.clear()?;
+        }
+
         // CPU execution loop
         loop {
             if let Ok(value) = out_kbd.try_recv() {
@@ -419,11 +471,80 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             breakpoints.run(true, &mut cpu, &mut context);
+
             // trace!("PC = 0x{:04X}", cpu.pc);
             cpu.step(&mut context);
             breakpoints.run(false, &mut cpu, &mut context);
+            context.0.1.1.0.tick();
+            context.0.1.0.tick();
+            let tick = context.0.1.1.1.1.0.prepare_tick(&mut cpu, &context);
+            context.0.1.1.1.1.0.tick(&mut cpu, tick);
 
             instruction_count += 1;
+
+            if args.display && (instruction_count % 0x100 == 0) {
+                if crossterm::event::poll(Duration::from_millis(0))? {
+                    let event = crossterm::event::read()?;
+                    if event
+                        == crossterm::event::Event::Key(crossterm::event::KeyEvent::new(
+                            crossterm::event::KeyCode::Char('q'),
+                            crossterm::event::KeyModifiers::empty(),
+                        ))
+                    {
+                        crossterm::terminal::disable_raw_mode()?;
+                        crossterm::execute!(
+                            io::stdout(),
+                            crossterm::terminal::LeaveAlternateScreen,
+                        )?;
+                        break;
+                    }
+                }
+                let vram = &context.1.vram[0..];
+                let vram_base = (vram[0x73] as usize) << 8;
+                terminal.draw(|f| {
+                    let mut text = Text::default();
+
+                    for i in 0..f.area().height.max(48) {
+                        let row = ((vram[vram_base + i as usize * 2] as u16) >> 1) << 8;
+                        let mut s = format!("{:02X}|", row >> 8);
+                        let c = |c| {
+                            if c == 0 {
+                                ' '
+                            } else if c < 0x20 || c > 0x7e {
+                                '.'
+                            } else {
+                                char::from(c)
+                            }
+                        };
+                        let mut b = 0;
+                        for i in 0..108 {
+                            let char = vram[row as usize + i];
+                            match i % 3 {
+                                0 => s.push(c(char)),
+                                1 => b = (char & 0xf0) >> 4,
+                                _ => s.push(c(b | ((char & 0xf) << 4))),
+                            }
+                        }
+                        for i in 128..221 {
+                            let char = vram[row as usize + i];
+                            match i % 3 {
+                                2 => s.push(c(char)),
+                                0 => b = (char & 0xf0) >> 4,
+                                _ => s.push(c(b | ((char & 0xf) << 4))),
+                            }
+                        }
+
+                        text.push_line(s);
+                    }
+                    f.render_widget(text, f.area());
+                    let stage = Span::styled(
+                        format!("{}", cpu.internal_ram[0x7e]),
+                        Style::default().fg(Color::LightBlue),
+                    );
+                    let stage = stage.into_right_aligned_line();
+                    f.render_widget(stage, f.area());
+                })?;
+            }
         }
     }
 

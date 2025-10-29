@@ -117,7 +117,7 @@ Output:
   
  - 0x7ff5:
   - `.x.._....` => x = alternate RAM layout?
-  - `..x._....` => x = enable SRAM at 0x8000? Might also be enabling DUART mapping?
+  - `..x._....` => x = 0 = force SRAM mapping?
   - `...._.x..` => x = ROM bank select (CONFIRMED via ROM disassembly)
   
  - 0x7ff6: 16-bit register, written twice

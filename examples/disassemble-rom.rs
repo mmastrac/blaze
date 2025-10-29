@@ -355,7 +355,7 @@ fn disassemble(rom: &[u8], output: &Path, debug: bool) -> io::Result<()> {
             AddressState::InstructionStart {
                 jump_target, root, ..
             } => {
-                let instruction = cpu.decode(&mut code, pc);
+                let instruction = cpu.decode(&mut code, pc as _);
                 if jump_target {
                     writeln!(file, "label_{pc:04X}:")?;
                 } else if root {
