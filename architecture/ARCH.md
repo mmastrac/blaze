@@ -52,7 +52,7 @@ P3:
  - 5: 60/70 Hz frame rate select (active high): connected to TEA2037A frame oscillator circuit (NOT used as timer/counter)
  - 4: CSYNC (VSYNC|HSYNC,active low) input: also connected to TEA2037A video input circuit (used as timer/counter input)
  - 3: DUART interrupt (active low)
- - 2: Memory Processor interrupt (active low)
+ - 2: Memory Processor interrupt (active low): works like a CPU hold
  - 1: Keyboard TX
  - 0: Keyboard RX
 
@@ -101,12 +101,15 @@ Output:
  - 0x7ef3:
   - `...._..xx` => x = VRAM page?
   - `...._.x..` => CMNCLK?
+ - 0x7ef4: (same as 7ef3 but for session 2)
+  - `...._..xx` => x = VRAM page?
+  - `...._.x..` => CMNCLK?
 
 
  - 0x7ff3:
-  - Set to `1010_0000` and then a delay
+  - Set to `1010_0000` and then a delay - `1..._....` may be a reset
   - `..x._....` => VRAM page mapped at 0x8000?
-  - `...x_....` => x = Some sort of swizzle? Could be used to quickly swap registers.
+  - `...x_....` => x = Some sort of swizzle? Could be used to quickly swap registers. Used for session flipping.
   - `...._..xx` => possibly invert/width
   
  - 0x7ff4:
@@ -118,6 +121,7 @@ Output:
  - 0x7ff5:
   - `.x.._....` => x = alternate RAM layout?
   - `..x._....` => x = 0 = force SRAM mapping?
+  - `...x_x...` => x = VRAM page select?
   - `...._.x..` => x = ROM bank select (CONFIRMED via ROM disassembly)
   
  - 0x7ff6: 16-bit register, written twice

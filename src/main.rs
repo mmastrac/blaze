@@ -1,27 +1,31 @@
 use clap::Parser;
 use i8051::breakpoint::{Action, Breakpoints};
 use i8051::peripheral::{Serial, Timer};
+use ratatui::crossterm::event::{Event, KeyCode};
 use ratatui::style::{Color, Style};
-use ratatui::text::{Span, Text};
-use std::collections::VecDeque;
+use ratatui::text::Span;
 use std::io::{self, IsTerminal, stdout};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
-use tracing::{Level, info, trace};
+use tracing::{Level, info, trace, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm;
 
+mod lk201;
 mod memory;
+mod screen;
 mod video;
 
 use memory::{Bank, RAM, ROM, VideoProcessor};
 
 use i8051::{Cpu, DefaultPortMapper, Register};
 
+use crate::lk201::LK201;
 use crate::memory::DiagnosticMonitor;
+use crate::screen::Screen;
 
 /// VT420 Terminal Emulator
 /// Emulates a VT420 terminal using an 8051 microcontroller
@@ -131,8 +135,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let video_row = VideoProcessor::new();
     let mut ram = RAM::new(bank.bank.clone(), video_row.sync.clone());
-    let (mut serial, in_kbd, out_kbd) = Serial::new();
-    let mut kbd_queue = VecDeque::new();
+    let (mut serial, in_kbd, out_kbd) = Serial::new(60);
     let mut default = DefaultPortMapper::default();
 
     let diagnostic_monitor = DiagnosticMonitor::default();
@@ -143,6 +146,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let mut breakpoints = Breakpoints::new();
+    let keyboard_pipe = in_kbd.clone();
+    let mut keyboard = LK201::new(in_kbd, out_kbd);
 
     // Enable tracing if requested
     // if args.trace && args.verbose {
@@ -183,6 +188,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     breakpoints.add(true, 0xB, Action::Log("Interrupt: Timer0".to_string()));
     breakpoints.add(true, 0x10000, Action::Log("Interrupt: Timer0".to_string()));
 
+    breakpoints.add(
+        true,
+        0xb66,
+        Action::Log("Interrupt:Entering user code".to_string()),
+    );
+    breakpoints.add(true, 0xb66, Action::TraceRegisters);
+    breakpoints.add(
+        true,
+        0xc30,
+        Action::Log("Interrupt: Leaving user code".to_string()),
+    );
+    breakpoints.add(true, 0xc30, Action::TraceRegisters);
+    breakpoints.add(
+        true,
+        0x10b66,
+        Action::Log("Interrupt:Entering user code".to_string()),
+    );
+    breakpoints.add(true, 0x10b66, Action::TraceRegisters);
+    breakpoints.add(
+        true,
+        0x10c30,
+        Action::Log("Interrupt: Leaving user code".to_string()),
+    );
+    breakpoints.add(true, 0x10c30, Action::TraceRegisters);
+
     breakpoints.add(true, 0x5a88, Action::Log("Test failed!!!".to_string()));
     breakpoints.add(true, 0x5d5a, Action::Log("Testing failed!!!".to_string()));
 
@@ -207,15 +237,47 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     breakpoints.add(true, 0x6ad9, Action::Log("Testing completed".to_string()));
     // breakpoints.add(true, 0x6ad9, Action::SetTraceInstructions(true));
     // Force tests to pass
-    breakpoints.add(true, 0x6ad9, Action::Set(Register::PC, 0x6b09));
-    breakpoints.add(true, 0x6ad9, Action::Set(Register::B, 0));
+    // breakpoints.add(true, 0x6ad9, Action::Set(Register::PC, 0x6b09));
+    breakpoints.add(true, 0x94ee, Action::Set(Register::B, 0));
+    breakpoints.add(true, 0x94ee, Action::Set(Register::RAM(0x1f), 0));
 
     // Skip AD22 loop(s)
-    // breakpoints.add(true, 0x950d, Action::Set("PC".to_string(), 0x951e));
+    // breakpoints.add(true, 0x950d, Action::Set(Register::PC, 0x951e));
     // breakpoints.add(true, 0x9513, Action::Set("PC".to_string(), 0x9516)); //works
     // breakpoints.add(true, 0x9513, Action::Set("PC".to_string(), 0x951e));
     // breakpoints.add(true, 0x957c, Action::Set("PC".to_string(), 0x9581));
     // breakpoints.add(true, 0x3bae, Action::Set("PC".to_string(), 0x3bcb));
+    // let mut once = std::sync::Once::new();
+    // breakpoints.add(
+    //     true,
+    //     0x950a,
+    //     Action::Run(Box::new(move |cpu| {
+    //         once.call_once(|| {
+    //             trace!("Sending F3...");
+    //             // _ = keyboard_pipe.send(0x58);
+    //             // _ = keyboard_pipe.send(0x58);
+    //             // _ = keyboard_pipe.send(0xB4);
+    //             // let byte_24 = cpu.internal_ram(0x24);
+    //             // cpu.internal_ram_write(0x24, byte_24 | 1);
+    //             // cpu.internal_ram_write(0x24, byte_24 | 2);
+    //         });
+    //     })),
+    // );
+
+    breakpoints.add(
+        true,
+        0x16a0d,
+        Action::Log("Dispatching keystroke".to_string()),
+    );
+    breakpoints.add(true, 0x16a0d, Action::TraceRegisters);
+
+    // Jump to setup (careful w/PSW)
+    // breakpoints.add(true, 0x169e0, Action::Set(Register::PSW, 0));
+    // breakpoints.add(true, 0x169e0, Action::Set(Register::PC, 0x6ac3));
+    // breakpoints.add(true, 0x3de9, Action::Set(Register::PC, 0x3df0));
+    // breakpoints.add(true, 0x3de9, Action::Set(Register::A, 0));
+    // breakpoints.add(true, 0x3de9, Action::Set(Register::R(3), 0));
+    // breakpoints.add(true, 0x3df6, Action::Set(Register::A, 0xf2));
 
     breakpoints.add(true, 0x5521, Action::Log("Loading init string".to_string()));
     breakpoints.add(true, 0x5521, Action::TraceRegisters);
@@ -306,7 +368,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         0x15d26,
         Action::Log("Wait for VSYNC complete (bank 1)".to_string()),
     );
-    // breakpoints.add(true, 0x15cca, Action::Set("PC".to_string(), 0x5d28));
 
     breakpoints.add(true, 0x15c89, Action::Log("Check VSYNC timing".to_string()));
     breakpoints.add(
@@ -314,35 +375,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         0x15cc5,
         Action::Log("Check VSYNC timing (failed)".to_string()),
     );
-    // breakpoints.add(true, 0x15c89, Action::Set("PC".to_string(), 0x5cc4));
 
     breakpoints.add(
         true,
         0x2074,
         Action::Log("Wait for VSYNC (bank 0)".to_string()),
     );
-    // breakpoints.add(true, 0x2074, Action::Set("PC".to_string(), 0x20c9));
 
     breakpoints.add(true, 0x16153, Action::Log("Keyboard test".to_string()));
-
-    // Skip the KBD interrupt check: JB 21.3,LAB_RAM_001006
-    breakpoints.add(true, 0x11006, Action::Set(Register::PC, 0x1009));
+    breakpoints.add(
+        true,
+        0x16184,
+        Action::Log("Keyboard test (failed)".to_string()),
+    );
+    breakpoints.add(
+        true,
+        0x1616e,
+        Action::Log("Keyboard test (success)".to_string()),
+    );
 
     // Skip EEPROM read
     // breakpoints.add(true, 0x1143, Action::SetTraceInstructions(true));
     breakpoints.add(true, 0x5b6d, Action::Set(Register::PC, 0x5b8d));
-
-    // Enter setup?
-    // breakpoints.add(false, 0x953d, Action::Run(Box::new(|cpu| {
-    //     cpu.internal_ram_write(0x24, cpu.internal_ram(0x24) & (1 << 2));
-    //     cpu.internal_ram_write(0x24, cpu.internal_ram(0x24) & (1 << 1));
-    //     cpu.internal_ram_write(0x3b, 0);
-    // })));
-
-    // // Enter setup?
-    // breakpoints.add(false, 0x4308, Action::Run(Box::new(|cpu| {
-    //     cpu.internal_ram_write(0x3b, 0);
-    // })));
 
     let mut context = (ports, ram, code);
     info!("CPU initialized, PC = 0x{:04X}", cpu.pc_ext(&context));
@@ -372,7 +426,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if debugger.handle_event(event, &mut cpu, &mut context) {
                             breakpoints.run(true, &mut cpu, &mut context);
                             cpu.step(&mut context);
-                            context.0.1.1.0.tick();
+                            keyboard.tick();
+                            context.0.1.1.0.tick(&mut cpu);
                             context.0.1.0.tick();
                             let tick = context.0.1.1.1.1.0.prepare_tick(&mut cpu, &context);
                             context.0.1.1.1.1.0.tick(&mut cpu, tick);
@@ -396,7 +451,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     breakpoints.run(true, &mut cpu, &mut context);
                     cpu.step(&mut context);
-                    context.0.1.1.0.tick();
+                    keyboard.tick();
+                    context.0.1.1.0.tick(&mut cpu);
                     context.0.1.0.tick();
                     let tick = context.0.1.1.1.1.0.prepare_tick(&mut cpu, &context);
                     context.0.1.1.1.1.0.tick(&mut cpu, tick);
@@ -417,131 +473,81 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // CPU execution loop
+        let mut running = true;
+        let mut hex = false;
         loop {
-            if let Ok(value) = out_kbd.try_recv() {
-                // trace!("KBD: {:02X}", value);
-                kbd_queue.push_back(value);
+            if running {
+                let pc = cpu.pc_ext(&context);
+                breakpoints.run(true, &mut cpu, &mut context);
+                cpu.step(&mut context);
+                breakpoints.run(false, &mut cpu, &mut context);
+                keyboard.tick();
+                context.0.1.1.0.tick(&mut cpu);
+                context.0.1.0.tick();
+                let tick = context.0.1.1.1.1.0.prepare_tick(&mut cpu, &context);
+                context.0.1.1.1.1.0.tick(&mut cpu, tick);
 
-                match kbd_queue.front().unwrap() {
-                    // Ping?
-                    0x55 => {
-                        trace!("KBD: Ping");
-                        kbd_queue.pop_front();
-                        _ = in_kbd.send(1);
-                        _ = in_kbd.send(0);
-                        _ = in_kbd.send(0);
-                        _ = in_kbd.send(0);
-                    }
-                    0x11 | 0x13 => {
-                        if kbd_queue.len() >= 2 {
-                            trace!("KBD: LED state");
-                            kbd_queue.pop_front();
-                            kbd_queue.pop_front();
-                        }
-                    }
-                    0x99 => {
-                        trace!("KBD: disable click");
-                        kbd_queue.pop_front();
-                        _ = in_kbd.send(0xba);
-                    }
-                    0xAB => {
-                        trace!("KBD: Request ID");
-                        kbd_queue.pop_front();
-                        _ = in_kbd.send(1);
-                        _ = in_kbd.send(0);
-                    }
-                    0xE1 => {
-                        trace!("KBD: Disable repeat");
-                        kbd_queue.pop_front();
-                        _ = in_kbd.send(0xba);
-                    }
-                    0xE3 => {
-                        trace!("KBD: Enable repeat");
-                        kbd_queue.pop_front();
-                        _ = in_kbd.send(0xba);
-                    }
-                    0xFD => {
-                        trace!("KBD: Power-up");
-                        kbd_queue.pop_front();
-                        _ = in_kbd.send(1);
-                        _ = in_kbd.send(0);
-                        _ = in_kbd.send(0);
-                        _ = in_kbd.send(0);
-                    }
-                    _ => {
-                        trace!("KBD (unknown): {:02X}", value);
-                        kbd_queue.clear();
-                        _ = in_kbd.send(0xB6);
-                    }
+                let new_pc = cpu.pc_ext(&context);
+                if new_pc & 0xffff == 0 {
+                    warn!("CPU reset detected at PC = 0x{:04X}", pc);
                 }
+                if (0xbb..0x110).contains(&new_pc) {
+                    warn!(
+                        "CPU weird step ({:02X}) detected at PC = 0x{:04X}",
+                        new_pc, pc
+                    );
+                }
+
+                instruction_count += 1;
             }
-            breakpoints.run(true, &mut cpu, &mut context);
 
-            // trace!("PC = 0x{:04X}", cpu.pc);
-            cpu.step(&mut context);
-            breakpoints.run(false, &mut cpu, &mut context);
-            context.0.1.1.0.tick();
-            context.0.1.0.tick();
-            let tick = context.0.1.1.1.1.0.prepare_tick(&mut cpu, &context);
-            context.0.1.1.1.1.0.tick(&mut cpu, tick);
-
-            instruction_count += 1;
-
-            if args.display && (instruction_count % 0x100 == 0) {
+            if args.display && (instruction_count % 0x100 == 0 || !running) {
                 if crossterm::event::poll(Duration::from_millis(0))? {
                     let event = crossterm::event::read()?;
-                    if event
-                        == crossterm::event::Event::Key(crossterm::event::KeyEvent::new(
-                            crossterm::event::KeyCode::Char('q'),
-                            crossterm::event::KeyModifiers::empty(),
-                        ))
+                    if let Event::Key(key) = event
+                        && key.modifiers.is_empty()
                     {
-                        crossterm::terminal::disable_raw_mode()?;
-                        crossterm::execute!(
-                            io::stdout(),
-                            crossterm::terminal::LeaveAlternateScreen,
-                        )?;
-                        break;
+                        match key.code {
+                            KeyCode::Char('q') => {
+                                crossterm::terminal::disable_raw_mode()?;
+                                crossterm::execute!(
+                                    io::stdout(),
+                                    crossterm::terminal::LeaveAlternateScreen,
+                                )?;
+                                break;
+                            }
+                            KeyCode::Char(' ') => {
+                                running = !running;
+                            }
+                            KeyCode::Char('h') => {
+                                hex = !hex;
+                            }
+                            KeyCode::Left => {
+                                _ = keyboard_pipe.send(0xa7);
+                            }
+                            KeyCode::Right => {
+                                _ = keyboard_pipe.send(0xa8);
+                            }
+                            KeyCode::Up => {
+                                _ = keyboard_pipe.send(0xaa);
+                            }
+                            KeyCode::Down => {
+                                _ = keyboard_pipe.send(0xa9);
+                            }
+                            KeyCode::Enter => {
+                                _ = keyboard_pipe.send(0xbd);
+                            }
+                            KeyCode::F(3) => {
+                                _ = keyboard_pipe.send(0x58);
+                            }
+                            _ => {}
+                        }
                     }
                 }
                 let vram = &context.1.vram[0..];
-                let vram_base = (vram[0x73] as usize) << 8;
                 terminal.draw(|f| {
-                    let mut text = Text::default();
-
-                    for i in 0..f.area().height.max(48) {
-                        let row = ((vram[vram_base + i as usize * 2] as u16) >> 1) << 8;
-                        let mut s = format!("{:02X}|", row >> 8);
-                        let c = |c| {
-                            if c == 0 {
-                                ' '
-                            } else if c < 0x20 || c > 0x7e {
-                                '.'
-                            } else {
-                                char::from(c)
-                            }
-                        };
-                        let mut b = 0;
-                        for i in 0..108 {
-                            let char = vram[row as usize + i];
-                            match i % 3 {
-                                0 => s.push(c(char)),
-                                1 => b = (char & 0xf0) >> 4,
-                                _ => s.push(c(b | ((char & 0xf) << 4))),
-                            }
-                        }
-                        for i in 128..221 {
-                            let char = vram[row as usize + i];
-                            match i % 3 {
-                                2 => s.push(c(char)),
-                                0 => b = (char & 0xf0) >> 4,
-                                _ => s.push(c(b | ((char & 0xf) << 4))),
-                            }
-                        }
-
-                        text.push_line(s);
-                    }
-                    f.render_widget(text, f.area());
+                    let screen = Screen::new(vram).hex_mode(hex);
+                    f.render_widget(screen, f.area());
                     let stage = Span::styled(
                         format!("{}", cpu.internal_ram[0x7e]),
                         Style::default().fg(Color::LightBlue),

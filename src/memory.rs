@@ -162,6 +162,9 @@ impl PortMapper for VideoProcessor {
         if addr == SFR_P3 {
             trace!("P3 write {:02X} @ {:X}", value, cpu.pc_ext());
         }
+        if addr == SFR_P2 {
+            trace!("P2 write {:02X} @ {:X}", value, cpu.pc_ext());
+        }
         (addr, value)
     }
     fn write(&mut self, (addr, value): Self::WriteValue) {
@@ -240,7 +243,11 @@ fn swizzle_video_ram(addr: u16, bits: u8) -> u16 {
     } else {
         // E O E O -> O E E O
         // 2 3 4 5 -> 3 2 4 5 ?
-        if addr < 0x0400 { addr ^ 0x0100 } else { addr }
+        if (0x200..0x400).contains(&addr) {
+            addr ^ 0x0100
+        } else {
+            addr
+        }
     }
 }
 
@@ -299,12 +306,20 @@ pub enum MemoryTarget {
 }
 
 impl RAM {
+    fn sram_mapped(&self) -> u32 {
+        self.sram_mapped_value(self.mapper[3])
+    }
+
+    fn sram_mapped_value(&self, value: u8) -> u32 {
+        (value & 0x20 != 0) as u32
+    }
+
     fn vram_page(&self) -> u32 {
-        self.vram_page_value(self.mapper[3])
+        self.sram_mapped_value(self.mapper[5])
     }
 
     fn vram_page_value(&self, value: u8) -> u32 {
-        (value & 0x20 != 0) as u32
+        (value & 0x08 != 0) as u32
     }
 
     fn target_for_addr(&self, mut addr: u16) -> (MemoryTarget, u32) {
@@ -322,7 +337,11 @@ impl RAM {
             (MemoryTarget::VRAM, vram_offset + addr as u32)
         } else {
             if self.vram_page() == 1 {
+                // if self.sram_mapped() == 1 {
+                //     (MemoryTarget::VRAM, (addr - 0x8000) as u32)
+                // } else {
                 (MemoryTarget::VRAM, (addr) as u32)
+                // }
             } else {
                 (MemoryTarget::SRAM, (addr - 0x8000) as u32)
             }
@@ -336,6 +355,7 @@ impl MemoryMapper for RAM {
         self.sram.len() as u32 + self.vram.len() as u32
     }
     fn read<C: CpuView>(&self, cpu: &C, addr: u32) -> u8 {
+        let pc = cpu.pc_ext();
         let mut addr = addr as u16;
 
         let (target, offset) = self.target_for_addr(addr);
@@ -350,7 +370,10 @@ impl MemoryMapper for RAM {
                 x => self.mapper[x as usize],
             },
             MemoryTarget::DUART => {
-                trace!("DUART RAM read from {}", READ_2681[offset as usize]);
+                trace!(
+                    "DUART RAM read from {} @ {:05X}",
+                    READ_2681[offset as usize], pc
+                );
 
                 if addr == 0x7fe5 {
                     if self.input_queue.borrow().len() > 0 {
@@ -382,13 +405,25 @@ impl MemoryMapper for RAM {
                 return 0;
             }
             MemoryTarget::Peripheral => {
+                trace!(
+                    "Peripheral read: 0x{:04X} = 0x{:02X} @ {:05X}",
+                    addr, self.peripheral[offset as usize], pc
+                );
                 // peripheral
                 return self.peripheral[offset as usize];
             }
             MemoryTarget::VRAM => {
+                trace!(
+                    "VRAM read: 0x{:04X} = 0x{:02X} @ {:05X}",
+                    addr, self.vram[offset as usize], pc
+                );
                 return self.vram[offset as usize];
             }
             MemoryTarget::SRAM => {
+                trace!(
+                    "SRAM read: 0x{:04X} = 0x{:02X} @ {:05X}",
+                    addr, self.sram[offset as usize], pc
+                );
                 return self.sram[offset as usize];
             }
         }
@@ -414,9 +449,9 @@ impl MemoryMapper for RAM {
                     "Mapper write: 0x{:04X} = 0x{:02X} -> 0x{:02X} @ {pc:05X}",
                     addr, self.mapper[offset as usize], value
                 );
-                if offset == 0x3 && self.vram_page() ^ self.vram_page_value(value) != 0 {
-                    let old = self.vram_page();
-                    let new = self.vram_page_value(value);
+                if offset == 0x3 && self.sram_mapped() ^ self.sram_mapped_value(value) != 0 {
+                    let old = self.sram_mapped();
+                    let new = self.sram_mapped_value(value);
                     info!("VIDEO: VRAM page changed: {} -> {}", old, new);
                     if old == 1 && new == 0 {
                         let font = &self.vram[0..];

@@ -29,6 +29,9 @@ ROM:
 
 RAM:
     0x182: rotation_and_language_settings
+    0x288: current_page_index
+    0xb111: cursor_x
+    0xb112: cursor_y
 
     0x7ef3: ???
 

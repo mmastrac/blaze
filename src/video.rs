@@ -1,4 +1,7 @@
-use tracing::trace;
+//! Video timing constants for the VT420 terminal. These are based on some
+//! experiments where we ensure that the function that waits for the composite
+//! sync signal passes correctly, and the self-test for number of csync pulses
+//! per frame returns both the correct timing and correct number of pulses.
 
 pub const TIMING_60HZ: Timing = Timing {
     h_active: 20,
@@ -42,6 +45,7 @@ impl Timing {
     pub fn vtot(&self) -> u16 {
         self.v_active + self.v_fp + self.v_sync + self.v_bp
     }
+    #[cfg(test)]
     pub fn pixel_tot(&self) -> u16 {
         self.htot() * self.vtot()
     }
@@ -59,8 +63,9 @@ impl SyncGen {
         Self { t, x: 0, y: 0 }
     }
 
-    /// Advance by one pixel clock. Returns true if CSYNC is not set. CSYNC is
-    /// active (low) when in HSYNC or VSYNC.
+    /// Advance by one pixel clock. Returns true if CSYNC is set. CSYNC is
+    /// active (low) when in HSYNC or VSYNC. This function returns the inverse
+    /// of the pin signal.
     pub fn tick(&mut self) -> bool {
         // Compute “in hsync” window for the current line
         let hsync_start = 0;

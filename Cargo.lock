@@ -364,7 +364,7 @@ checksum = "bcaaec4551594c969335c98c903c1397853d4198408ea609190f420500f6be71"
 
 [[package]]
 name = "i8051"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "bin_file",
  "bytemuck",
@@ -375,7 +375,7 @@ dependencies = [
 
 [[package]]
 name = "i8051-debug-tui"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "i8051",
  "ratatui",
@@ -386,7 +386,7 @@ dependencies = [
 
 [[package]]
 name = "i8051-proc-macro"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "proc-macro2",
  "quote",
