@@ -142,7 +142,7 @@ impl<'a> Widget for Screen<'a> {
                 // Render characters
                 for i in 0..132.min((area.width - col) as usize) {
                     let char_code = line[i] & 0xff;
-                    let ch = if char_code == 0 {
+                    let ch = if char_code == 0 || char_code == 0x98 {
                         ' '
                     } else if char_code < 0x20 || char_code > 0x7e {
                         '.'
@@ -151,6 +151,12 @@ impl<'a> Widget for Screen<'a> {
                     };
 
                     if let Some(cell) = buf.cell_mut((area.left() + col, area.top() + row_idx)) {
+                        if char_code == 0 && attr[i] >> 2 == 0xe {
+                            cell.set_symbol(" ");
+                            cell.set_style(Style::default());
+                            col += 1;
+                            continue;
+                        }
                         cell.set_symbol(&ch.to_string());
                         let mut style = Style::default();
                         if attr[i] & 1 != 0 {
@@ -160,6 +166,9 @@ impl<'a> Widget for Screen<'a> {
                             style = style.bold();
                         }
                         if attr[i] & 8 != 0 {
+                            style = style.bold();
+                        }
+                        if attr[i] & 16 != 0 {
                             style = style.reversed();
                         }
                         cell.set_style(style);

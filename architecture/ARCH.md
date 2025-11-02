@@ -110,7 +110,8 @@ Output:
   - Set to `1010_0000` and then a delay - `1..._....` may be a reset
   - `..x._....` => VRAM page mapped at 0x8000?
   - `...x_....` => x = Some sort of swizzle? Could be used to quickly swap registers. Used for session flipping.
-  - `...._..xx` => possibly invert/width
+  - `...._..x.` => possibly invert
+  - `...._...x` => 1 = 132 columns, 0 = 80 columns
   
  - 0x7ff4:
   - `x..._....` => 1 = 70Hz (70Hz ~14.29ms/frame, 536 lines), 0 = 60Hz (60Hz ~16.67ms/frame, 625 lines) (CONFIRMED via ROM disassembly)

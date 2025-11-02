@@ -2,8 +2,10 @@ use clap::Parser;
 use i8051::breakpoint::{Action, Breakpoints};
 use i8051::peripheral::{Serial, Timer};
 use ratatui::crossterm::event::{Event, KeyCode};
+use ratatui::layout::Offset;
 use ratatui::style::{Color, Style};
-use ratatui::text::Span;
+use ratatui::text::{Line, Span};
+use std::fs::File;
 use std::io::{self, IsTerminal, stdout};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -64,15 +66,18 @@ fn parse_hex_address(s: &str) -> Result<u32, Box<dyn std::error::Error + Send + 
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
-
-    if args.debug || args.display {
-        // ?
+    let level = if args.verbose {
+        Level::TRACE
     } else {
-        let level = if args.verbose {
-            Level::TRACE
-        } else {
-            Level::INFO
-        };
+        Level::INFO
+    };
+    if args.display {
+        tracing_subscriber::fmt()
+            .with_max_level(level)
+            .with_ansi(false)
+            .with_writer(File::create("/tmp/blaze-vt.log").unwrap())
+            .init();
+    } else if !args.debug {
         let format = tracing_subscriber::fmt::format()
             .with_target(false)
             .with_line_number(false)
@@ -221,6 +226,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         0x5ed1,
         Action::Log("Testing keyboard serial".to_string()),
     );
+
+    breakpoints.add(
+        true,
+        0x100b,
+        Action::Log("KBD: Command requires ACK".to_string()),
+    );
+
+    breakpoints.add(
+        true,
+        0x1100b,
+        Action::Log("KBD: Command requires ACK".to_string()),
+    );
+
+    breakpoints.add(true, 0x1009, Action::Log("KBD: Got ack".to_string()));
+
+    breakpoints.add(true, 0x11009, Action::Log("KBD: Got ack".to_string()));
 
     breakpoints.add(true, 0xf0d, Action::Log("Update DUART bits".to_string()));
     breakpoints.add(true, 0x10f0d, Action::Log("Update DUART bits".to_string()));
@@ -537,7 +558,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Enter => {
                                 _ = keyboard_pipe.send(0xbd);
                             }
-                            KeyCode::F(3) => {
+                            KeyCode::F(3) | KeyCode::Char('3') => {
                                 _ = keyboard_pipe.send(0x58);
                             }
                             _ => {}
@@ -554,6 +575,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     );
                     let stage = stage.into_right_aligned_line();
                     f.render_widget(stage, f.area());
+                    let mut mapper_line = Line::default();
+                    for i in 0..16 {
+                        let attr = context.1.mapper[i];
+                        let style = Style::default().fg(Color::Indexed(attr));
+                        let text = Span::styled(format!("{:02X} ", context.1.mapper[i]), style);
+                        mapper_line.push_span(text);
+                    }
+                    f.render_widget(mapper_line, f.area());
+
+                    let vram = &context.1.vram[0..256];
+                    for i in 0..8 {
+                        let mut vram_line = Line::default();
+                        for j in 0..32 {
+                            let attr = vram[i * 32 + j];
+                            let style = Style::default().fg(Color::Indexed(attr));
+                            let text = Span::styled(format!("{:02X} ", attr), style);
+                            vram_line.push_span(text);
+                        }
+                        f.render_widget(
+                            vram_line,
+                            f.area().offset(Offset {
+                                x: 0,
+                                y: (f.area().height as i32 - 8) + i as i32,
+                            }),
+                        );
+                    }
                 })?;
             }
         }
