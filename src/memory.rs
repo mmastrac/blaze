@@ -11,6 +11,7 @@ use i8051::sfr::SFR_P3;
 use i8051::{CpuView, MemoryMapper, PortMapper, ReadOnlyMemoryMapper};
 use tracing::{info, trace};
 
+use crate::nvr::Nvr;
 use crate::video::SyncGen;
 use crate::video::TIMING_60HZ;
 use crate::video::TIMING_70HZ;
@@ -210,10 +211,14 @@ pub struct RAM {
     pub sram: [u8; 0x8000],  // 32kB
     pub vram: [u8; 0x20000], // 128kB
     pub mapper: [u8; 16],
+    pub mapper2: [u8; 16], // 6, 9, a, b, c can be written twice
     pub peripheral: [u8; 0x100],
     pub rom_bank: Rc<Cell<bool>>,
     pub input_queue: RefCell<Vec<u8>>,
     pub sync: SyncHolder,
+    pub nvr: Nvr,
+    pub duart_input: u8,
+    pub duart_output_inv: u8,
 }
 
 impl RAM {
@@ -221,6 +226,7 @@ impl RAM {
         let sram = [0; 0x8000];
         let vram = [0; 0x20000];
         let mut mapper = [0; 16];
+        let mut mapper2 = [0; 16];
         let peripheral = [0; 0x100];
         mapper[3] = 0xff;
         mapper[4] = 0xff;
@@ -229,10 +235,14 @@ impl RAM {
             sram,
             vram,
             mapper,
+            mapper2,
             peripheral,
             rom_bank,
             input_queue: RefCell::new("x".to_string().into_bytes()),
             sync,
+            nvr: Nvr::new(),
+            duart_input: 0,
+            duart_output_inv: 0,
         }
     }
 }
@@ -260,10 +270,10 @@ fn calculate_mapper_7ff6(a: u8, b: u8, vram: &[u8]) -> u8 {
     let c4 = (a & 0b0000_1000) != 0;
     let x = if c4 { b } else { a };
 
-    let c0 = (b & 0b0000_1000) != 0;
-    let c1 = (a & 0b0100_0000) != 0;
-    let c2 = (x & 0b0000_0010) != 0;
-    let c3 = (x & 0b0000_0001) != 0;
+    let c0 = (b & 0b0000_1000) != 0; // force double?
+    let c1 = (a & 0b0100_0000) != 0; // ?
+    let c2 = (x & 0b0000_0010) != 0; // width/invert?
+    let c3 = (x & 0b0000_0001) != 0; // width/invert?
 
     let c_idx = c0 as u8 | ((c1 as u8) << 1) | ((c2 as u8) << 2) | ((c3 as u8) << 3);
     let c = C[c_idx as usize];
@@ -347,6 +357,16 @@ impl RAM {
             }
         }
     }
+
+    pub fn tick(&mut self) {
+        let nvrtxd = self.duart_output_inv & 1 << 6 == 0;
+        let nvrclk = self.duart_output_inv & 1 << 5 == 0;
+        let nvrcs = self.duart_output_inv & 1 << 4 == 0;
+        let (nvrrxd, nvrrdy) = self.nvr.tick(nvrcs, nvrclk, nvrtxd);
+
+        self.duart_input = self.duart_input & !(1 << 4) | (nvrrdy as u8) << 4;
+        self.duart_input = self.duart_input & !(1 << 3) | (nvrrxd as u8) << 3;
+    }
 }
 
 impl MemoryMapper for RAM {
@@ -392,9 +412,7 @@ impl MemoryMapper for RAM {
                     return 0b0000_0000;
                 }
                 if addr == 0x7fed {
-                    // eeprom ready
-                    trace!("RAM read EEPROM ready");
-                    return 0b0011_0000;
+                    return self.duart_input;
                 }
                 if addr == 0x7feb {
                     let next = self.input_queue.borrow_mut().remove(0);
@@ -436,12 +454,12 @@ impl MemoryMapper for RAM {
     }
 
     fn write(&mut self, (target, offset, addr, pc, value): Self::WriteValue) {
-        if pc != 0x15B33 && pc != 0x15BB1 && pc != 0x15BCC {
-            trace!(
-                "RAM write: 0x{:04X} = 0x{:02X} ({:?}) @ {pc:05X}",
-                addr, value, value as char
-            );
-        }
+        // if pc != 0x15B33 && pc != 0x15BB1 && pc != 0x15BCC {
+        //     trace!(
+        //         "RAM write: 0x{:04X} = 0x{:02X} ({:?}) @ {pc:05X}",
+        //         addr, value, value as char
+        //     );
+        // }
 
         match target {
             MemoryTarget::Mapper => {
@@ -472,6 +490,8 @@ impl MemoryMapper for RAM {
                     self.sync.set_hz_70((value & 0x10) != 0);
                 }
 
+                // Save the old value for mapper2
+                self.mapper2[offset as usize] = self.mapper[offset as usize];
                 self.mapper[offset as usize] = value;
             }
             MemoryTarget::DUART => {
@@ -479,15 +499,23 @@ impl MemoryMapper for RAM {
                     "DUART write: {} 0x{:04X} = 0x{:02X}",
                     WRITE_2681[offset as usize], addr, value
                 );
+                if offset == 0xe {
+                    self.duart_output_inv |= value;
+                }
+                if offset == 0xf {
+                    self.duart_output_inv &= !value;
+                }
             }
             MemoryTarget::Peripheral => {
                 trace!("Peripheral write: 0x{:04X} = 0x{:02X}", addr, value);
                 self.peripheral[offset as usize] = value;
             }
             MemoryTarget::VRAM => {
+                trace!("VRAM write: 0x{:04X} = 0x{:02X} @ {:05X}", addr, value, pc);
                 self.vram[offset as usize] = value;
             }
             MemoryTarget::SRAM => {
+                trace!("SRAM write: 0x{:04X} = 0x{:02X} @ {:05X}", addr, value, pc);
                 self.sram[offset as usize] = value;
             }
         }

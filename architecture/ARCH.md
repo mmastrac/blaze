@@ -108,14 +108,16 @@ Output:
 
  - 0x7ff3:
   - Set to `1010_0000` and then a delay - `1..._....` may be a reset
+  - `1..._....` => blink register?
   - `..x._....` => VRAM page mapped at 0x8000?
   - `...x_....` => x = Some sort of swizzle? Could be used to quickly swap registers. Used for session flipping.
-  - `...._..x.` => possibly invert
+  - `...._x...` => x = screen register select?
+  - `...._.xx.` => possibly invert
   - `...._...x` => 1 = 132 columns, 0 = 80 columns
   
  - 0x7ff4:
   - `x..._....` => 1 = 70Hz (70Hz ~14.29ms/frame, 536 lines), 0 = 60Hz (60Hz ~16.67ms/frame, 625 lines) (CONFIRMED via ROM disassembly)
-  - `.x.x_....` => 01 = normal VRAM layout? 11 = alternate VRAM layout? (memory existance is tested in bootstrap, 11 is set if not there)
+  - `.x.x_....` => 01 = normal VRAM layout? 11 = alternate VRAM layout? (memory existance is tested in bootstrap, 11 is set if not there, 0x40 is toggled every ~1s, possibly for updating background page ram)
   - `...._..xx` => possibly invert/width
   - `...._x...` => possibly page flip control?
   
@@ -125,4 +127,39 @@ Output:
   - `...x_x...` => x = VRAM page select?
   - `...._.x..` => x = ROM bank select (CONFIRMED via ROM disassembly)
   
- - 0x7ff6: 16-bit register, written twice
+ - 0x7ff6: 16-bit register, written twice, likely a chargen register
+    - 78: 48 lines (0111_1000)
+    - 9A: 36 lines (1001_1010)
+    - D0: 24 lines (1101_0000)
+    - F0/FC: (set during vsync: 1111_????, F0 = 24 lines, FC = other)
+
+## Video Timing
+
+ - 60Hz: 16.67ms/frame, 625 lines, 417 active (208 vsync)
+ - 70Hz: 14.29ms/frame, 536 lines, 417 active (119 vsync)
+
+## Video RAM Layout
+
+ - 0x0000-0x1fff: Screen 0
+ - 0x2000-0x3fff: Screen 1
+
+## Video RAM
+
+ - 0x00, 0x01 ...: Per-row data
+    - Byte 0:
+        - `_______.` => memory page for row data
+        - `.......x` => 1 = force 132 columns
+    - Byte 1:
+        - 0x04: double-width
+        - 0x08: double-width, double-height top half
+        - 0x0c: double-width, double-height bottom half
+        - `......x.` => 1 = double width
+        - `.......x` => 1 = swap between screen 0 and screen 1 attributes
+
+ - Char attributes:
+    0x02: bold
+    0x04: reverse
+    0x08: blink
+    
+    ?: underline
+    ?: invisible

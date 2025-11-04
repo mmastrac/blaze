@@ -7,22 +7,22 @@ pub const TIMING_60HZ: Timing = Timing {
     h_active: 20,
     h_fp: 2,
     h_sync: 6,
-    h_bp: 4, // Htot = 32
-    v_active: 414,
+    h_bp: 4,       // Htot = 32
+    v_active: 417, // Expected by ROM
     v_fp: 4,
     v_sync: 16,
-    v_bp: 191, // Vtot = 625
+    v_bp: 188, // Vtot = 625
 };
 
 pub const TIMING_70HZ: Timing = Timing {
     h_active: 20,
     h_fp: 2,
     h_sync: 6,
-    h_bp: 4, // Htot = 32
-    v_active: 414,
+    h_bp: 4,       // Htot = 32
+    v_active: 417, // Expected by ROM
     v_fp: 3,
     v_sync: 16,
-    v_bp: 103, // Vtot = 536
+    v_bp: 100, // Vtot = 536
 };
 
 #[derive(Clone, Copy, Debug)]

@@ -586,10 +586,167 @@ impl From<PowerUpError> for u8 {
     }
 }
 
+pub struct LK201Sender {
+    send: mpsc::Sender<u8>,
+}
+
+impl LK201Sender {
+    fn new(send: mpsc::Sender<u8>) -> Self {
+        Self { send }
+    }
+
+    pub fn send_special_key(&self, key: SpecialKey) {
+        _ = self.send.send(key as u8);
+    }
+
+    pub fn send_escape(&self) {
+        _ = self.send.send(0xaf); // ctrl
+        _ = self.send.send(0xcb); // 3
+        _ = self.send.send(0xb3); // all up
+    }
+}
+
+macro_rules! def_char_keys {
+    ($($keycode:literal => $char:literal $( $char_shift:literal )?;)*) => {
+        impl LK201Sender {
+            pub fn send_char(&self, c: char) -> Result<(), ()> {
+                match c {
+                $(
+                    $char => Ok(_ = (self.send.send($keycode))),
+                    $(
+                        $char_shift => Ok(_ = (
+                            (self.send.send(0xae), self.send.send($keycode), self.send.send(0xb3))
+                        )),
+                    )?
+                )*
+                _ => Err(()),
+                }
+            }
+        }
+    };
+}
+
+def_char_keys!(
+0xbf => '`' '~';
+0xc0 => '1' '!';
+0xc5 => '2' '@';
+0xcb => '3' '#';
+0xd0 => '4' '$';
+0xd6 => '5' '%';
+0xdb => '6' '^';
+0xe0 => '7' '&';
+0xe5 => '8' '*';
+0xea => '9' '(';
+0xef => '0' ')';
+0xf9 => '-' '_';
+0xf5 => '=' '+';
+0xc1 => 'q' 'Q';
+0xc6 => 'w' 'W';
+0xcc => 'e' 'E';
+0xd1 => 'r' 'R';
+0xd7 => 't' 'T';
+0xdc => 'y' 'Y';
+0xe1 => 'u' 'U';
+0xe6 => 'i' 'I';
+0xeb => 'o' 'O';
+0xf0 => 'p' 'P';
+
+0xfa => '[' '{';
+0xf6 => ']' '}';
+0xf7 => '\\' '|';
+
+0xc2 => 'a' 'A';
+0xc7 => 's' 'S';
+0xcd => 'd' 'D';
+0xd2 => 'f' 'F';
+0xd8 => 'g' 'G';
+0xdd => 'h' 'H';
+0xe2 => 'j' 'J';
+0xe7 => 'k' 'K';
+0xec => 'l' 'L';
+0xf2 => ';' ':';
+0xfb => '\'' '"';
+
+0xc3 => 'z' 'Z';
+0xc8 => 'x' 'X';
+0xce => 'c' 'C';
+0xd3 => 'v' 'V';
+0xd9 => 'b' 'B';
+0xde => 'n' 'N';
+0xe3 => 'm' 'M';
+0xc9 => '<' '>';
+0xe8 => ',';
+0xed => '.';
+0xf3 => '/' '?';
+
+0xd4 => ' ';
+);
+
 pub struct LK201 {
     recv: mpsc::Receiver<u8>,
     send: mpsc::Sender<u8>,
     kbd_queue: VecDeque<u8>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum SpecialKey {
+    Kp0 = 0x92,
+    KpPeriod = 0x94,
+    KpEnter = 0x95,
+    Kp1 = 0x96,
+    Kp2 = 0x97,
+    Kp3 = 0x98,
+    Kp4 = 0x99,
+    Kp5 = 0x9a,
+    Kp6 = 0x9b,
+    KpComma = 0x9c,
+    Kp7 = 0x9d,
+    Kp8 = 0x9e,
+    Kp9 = 0x9f,
+    KpHyphen = 0xa0,
+    KpPf1 = 0xa1,
+    KpPf2 = 0xa2,
+    KpPf3 = 0xa3,
+    KpPf4 = 0xa4,
+    Delete = 0xbc,
+    Return = 0xbd,
+    Tab = 0xbe,
+    Lock = 0xb0,
+    Meta = 0xb1,
+    Shift = 0xae,
+    Ctrl = 0xaf,
+    Left = 0xa7,
+    Right = 0xa8,
+    Down = 0xa9,
+    Up = 0xaa,
+    RShift = 0xab,
+    Find = 0x8a,
+    InsertHere = 0x8b,
+    Remove = 0x8c,
+    Select = 0x8d,
+    PrevScreen = 0x8e,
+    NextScreen = 0x8f,
+    F1 = 0x56,
+    F2 = 0x57,
+    F3 = 0x58,
+    F4 = 0x59,
+    F5 = 0x5a,
+    F6 = 0x64,
+    F7 = 0x65,
+    F8 = 0x66,
+    F9 = 0x67,
+    F10 = 0x68,
+    F11 = 0x71,
+    F12 = 0x72,
+    F13 = 0x73,
+    F14 = 0x74,
+    Help = 0x7c,
+    Menu = 0x7d,
+    F17 = 0x80,
+    F18 = 0x81,
+    F19 = 0x82,
+    F20 = 0x83,
 }
 
 impl LK201 {
@@ -599,6 +756,10 @@ impl LK201 {
             recv,
             kbd_queue: VecDeque::new(),
         }
+    }
+
+    pub fn sender(&self) -> LK201Sender {
+        LK201Sender::new(self.send.clone())
     }
 
     pub fn tick(&mut self) {

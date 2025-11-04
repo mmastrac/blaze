@@ -1,15 +1,18 @@
 use clap::Parser;
+use hex_literal::hex;
 use i8051::breakpoint::{Action, Breakpoints};
 use i8051::peripheral::{Serial, Timer};
-use ratatui::crossterm::event::{Event, KeyCode};
+use ratatui::crossterm::event::{Event, KeyCode, KeyModifiers};
 use ratatui::layout::Offset;
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, IsTerminal, stdout};
-use std::path::PathBuf;
+use std::mem;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
-use tracing::{Level, info, trace, warn};
+use tracing::{Level, info, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -18,16 +21,17 @@ use ratatui::crossterm;
 
 mod lk201;
 mod memory;
+mod nvr;
 mod screen;
 mod video;
 
 use memory::{Bank, RAM, ROM, VideoProcessor};
 
-use i8051::{Cpu, DefaultPortMapper, Register};
+use i8051::{Cpu, CpuContext, CpuView, DefaultPortMapper, PortMapper};
 
-use crate::lk201::LK201;
+use crate::lk201::{LK201, LK201Sender, SpecialKey};
 use crate::memory::DiagnosticMonitor;
-use crate::screen::Screen;
+use crate::screen::{DisplayMode, Screen};
 
 /// VT420 Terminal Emulator
 /// Emulates a VT420 terminal using an 8051 microcontroller
@@ -39,16 +43,28 @@ struct Args {
     #[arg(long)]
     rom: PathBuf,
 
+    /// Path to the non-volatile RAM file
+    #[arg(long)]
+    nvr: Option<PathBuf>,
+
     /// Display the video output
     #[arg(long)]
     display: bool,
+
+    /// Display the video RAM
+    #[arg(long, requires = "display")]
+    show_vram: bool,
+
+    /// Display the mapper
+    #[arg(long, requires = "display")]
+    show_mapper: bool,
 
     /// Enable debugger
     #[arg(long)]
     debug: bool,
 
     /// Breakpoints for debug mode, repeatable, parsed as hex
-    #[arg(long, value_parser = parse_hex_address)]
+    #[arg(value_parser = parse_hex_address, long="bp", alias="breakpoint")]
     breakpoint: Vec<u32>,
 
     /// Enable instruction tracing
@@ -62,6 +78,211 @@ struct Args {
 
 fn parse_hex_address(s: &str) -> Result<u32, Box<dyn std::error::Error + Send + Sync>> {
     Ok(u32::from_str_radix(s, 16)?)
+}
+
+struct System {
+    rom: ROM,
+    memory: RAM,
+    bank: Bank,
+    nvr_file: Option<PathBuf>,
+    nvr_write: usize,
+
+    video_row: VideoProcessor,
+    serial: Serial,
+    diagnostic_monitor: DiagnosticMonitor,
+    timer: Timer,
+    default: DefaultPortMapper,
+
+    keyboard: LK201,
+    breakpoints: Breakpoints,
+}
+
+impl System {
+    fn new(
+        rom: &Path,
+        nvr: Option<&Path>,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let bank = Bank::default();
+        info!("Loading ROM into memory...");
+        let rom = ROM::new(&rom, bank.bank.clone())?;
+        let video_row = VideoProcessor::new();
+        let (serial, in_kbd, out_kbd) = Serial::new(60);
+        let mut memory = RAM::new(bank.bank.clone(), video_row.sync.clone());
+        let mut nvr_file = None;
+        if let Some(nvr) = nvr {
+            nvr_file = Some(nvr.to_owned());
+            if !nvr.exists() {
+                warn!("NVR file does not exist, creating it");
+                fs::write(nvr, vec![0xff; 128])?;
+            }
+            let mut nvr = fs::read(nvr)?;
+            if nvr.len() < 128 {
+                warn!("NVR file is too small, padding with zeros");
+                nvr.resize(128, 0xff);
+            } else if nvr.len() > 128 {
+                warn!("NVR file is too large, truncating");
+                nvr.truncate(128);
+            }
+            memory.nvr.mem.copy_from_slice(&nvr);
+        } else {
+            // Some checksums hand-modified (0x30, 0x50, 0x70) for tests to pass
+            let initial_nvr = hex!(
+                "65 44 88 1e 1e 85 54 88  85 54 00 00 04 50 00 00"
+                "00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00"
+                "00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00"
+                "03 00 c0 25 00 24 01 00  00 00 02 98 00 00 00 00"
+                "01 01 01 01 01 01 01 01  01 01 01 01 01 01 01 01"
+                "4a 00 c0 25 00 24 01 00  00 00 02 98 00 00 00 00"
+                "01 01 01 01 01 01 01 01  01 01 01 01 01 01 01 01"
+                "4a ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff"
+            );
+
+            memory.nvr.mem.fill(0xff);
+            memory.nvr.mem[..initial_nvr.len()].copy_from_slice(&initial_nvr);
+        }
+        Ok(Self {
+            bank,
+            memory,
+            rom,
+            nvr_file,
+            nvr_write: 0,
+            video_row,
+            serial,
+            diagnostic_monitor: DiagnosticMonitor::default(),
+            timer: Timer::default(),
+            default: DefaultPortMapper::default(),
+            keyboard: LK201::new(in_kbd.clone(), out_kbd),
+            breakpoints: Breakpoints::new(),
+        })
+    }
+
+    fn step(&mut self, cpu: &mut Cpu) {
+        let start = Instant::now();
+        let mut breakpoints = Breakpoints::default();
+        mem::swap(&mut self.breakpoints, &mut breakpoints);
+        breakpoints.run(true, cpu, self);
+        mem::swap(&mut self.breakpoints, &mut breakpoints);
+
+        cpu.step(self);
+
+        self.memory.tick();
+        self.keyboard.tick();
+        self.serial.tick(cpu);
+        self.video_row.tick();
+        let tick = self.timer.prepare_tick(cpu, self);
+        self.timer.tick(cpu, tick);
+
+        if self.memory.nvr.write_count > self.nvr_write {
+            if let Some(nvr_file) = &self.nvr_file {
+                fs::write(nvr_file, self.memory.nvr.mem).unwrap();
+            }
+            self.nvr_write = self.memory.nvr.write_count;
+        }
+
+        mem::swap(&mut self.breakpoints, &mut breakpoints);
+        breakpoints.run(false, cpu, self);
+        mem::swap(&mut self.breakpoints, &mut breakpoints);
+        if start.elapsed() > Duration::from_millis(100) {
+            warn!("Step took too long: {:?}", start.elapsed());
+        }
+    }
+}
+
+impl PortMapper for System {
+    type WriteValue = <(
+        VideoProcessor,
+        (Serial, (DiagnosticMonitor, (Timer, DefaultPortMapper))),
+    ) as PortMapper>::WriteValue;
+    fn interest<C: CpuView>(&self, cpu: &C, addr: u8) -> bool {
+        (
+            &self.video_row,
+            (
+                &self.serial,
+                (&self.diagnostic_monitor, (&self.timer, &self.default)),
+            ),
+        )
+            .interest(cpu, addr)
+    }
+    fn read<C: CpuView>(&self, cpu: &C, addr: u8) -> u8 {
+        (
+            &self.video_row,
+            (
+                &self.serial,
+                (&self.diagnostic_monitor, (&self.timer, &self.default)),
+            ),
+        )
+            .read(cpu, addr)
+    }
+    fn prepare_write<C: CpuView>(&self, cpu: &C, addr: u8, value: u8) -> Self::WriteValue {
+        (
+            &self.video_row,
+            (
+                &self.serial,
+                (&self.diagnostic_monitor, (&self.timer, &self.default)),
+            ),
+        )
+            .prepare_write(cpu, addr, value)
+    }
+    fn write(&mut self, value: Self::WriteValue) {
+        (
+            &mut self.video_row,
+            (
+                &mut self.serial,
+                (
+                    &mut self.diagnostic_monitor,
+                    (&mut self.timer, &mut self.default),
+                ),
+            ),
+        )
+            .write(value)
+    }
+    fn extend_short_read<C: CpuView>(&self, cpu: &C, addr: u8) -> u16 {
+        (
+            &self.video_row,
+            (
+                &self.serial,
+                (&self.diagnostic_monitor, (&self.timer, &self.default)),
+            ),
+        )
+            .extend_short_read(cpu, addr)
+    }
+    fn pc_extension<C: CpuView>(&self, cpu: &C) -> u16 {
+        self.bank.pc_extension(cpu)
+    }
+    fn read_latch<C: CpuView>(&self, cpu: &C, addr: u8) -> u8 {
+        (
+            &self.video_row,
+            (
+                &self.serial,
+                (&self.diagnostic_monitor, (&self.timer, &self.default)),
+            ),
+        )
+            .read_latch(cpu, addr)
+    }
+}
+
+impl CpuContext for System {
+    type Ports = System;
+    type Xdata = RAM;
+    type Code = ROM;
+    fn ports(&self) -> &Self::Ports {
+        self
+    }
+    fn ports_mut(&mut self) -> &mut Self::Ports {
+        self
+    }
+    fn xdata(&self) -> &Self::Xdata {
+        &self.memory
+    }
+    fn xdata_mut(&mut self) -> &mut Self::Xdata {
+        &mut self.memory
+    }
+    fn code(&self) -> &Self::Code {
+        &self.rom
+    }
+    fn code_mut(&mut self) -> &mut Self::Code {
+        &mut self.rom
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -107,27 +328,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("Error: ROM file does not exist: {:?}", args.rom);
         std::process::exit(1);
     }
-    let bank = Bank::default();
-
-    // Load ROM into memory
-    info!("Loading ROM into memory...");
-    let mut code = ROM::new(&args.rom, bank.bank.clone())?;
-
-    info!("ROM loaded: {} bytes", code.rom_size());
-    info!(
-        "ROM banks: {} ({} bytes each)",
-        code.num_banks(),
-        code.bank_size()
-    );
-    info!(
-        "Current ROM bank: {} ({} 64KB)",
-        code.rom_bank(),
-        if code.rom_bank() == 0 {
-            "first"
-        } else {
-            "remaining"
-        }
-    );
 
     // Initialize the 8051 CPU emulator
     info!("Initializing 8051 CPU emulator...");
@@ -138,21 +338,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start_time = Instant::now();
     let mut instruction_count = 0;
 
-    let video_row = VideoProcessor::new();
-    let mut ram = RAM::new(bank.bank.clone(), video_row.sync.clone());
-    let (mut serial, in_kbd, out_kbd) = Serial::new(60);
-    let mut default = DefaultPortMapper::default();
-
-    let diagnostic_monitor = DiagnosticMonitor::default();
-    let timer = Timer::default();
-    let mut ports = (
-        bank,
-        (video_row, (serial, (diagnostic_monitor, (timer, default)))),
-    );
-
-    let mut breakpoints = Breakpoints::new();
-    let keyboard_pipe = in_kbd.clone();
-    let mut keyboard = LK201::new(in_kbd, out_kbd);
+    let mut system = System::new(&args.rom, args.nvr.as_deref()).unwrap();
 
     // Enable tracing if requested
     // if args.trace && args.verbose {
@@ -161,6 +347,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //     breakpoints.add(true, 0x10000, Action::SetTraceInstructions(true));
     // }
 
+    let breakpoints = &mut system.breakpoints;
+    let code = &system.rom;
     for addr in code.find_bank_dispatch() {
         breakpoints.add(
             true,
@@ -196,7 +384,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     breakpoints.add(
         true,
         0xb66,
-        Action::Log("Interrupt:Entering user code".to_string()),
+        Action::Log("Interrupt: Entering user code".to_string()),
     );
     breakpoints.add(true, 0xb66, Action::TraceRegisters);
     breakpoints.add(
@@ -259,31 +447,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // breakpoints.add(true, 0x6ad9, Action::SetTraceInstructions(true));
     // Force tests to pass
     // breakpoints.add(true, 0x6ad9, Action::Set(Register::PC, 0x6b09));
-    breakpoints.add(true, 0x94ee, Action::Set(Register::B, 0));
-    breakpoints.add(true, 0x94ee, Action::Set(Register::RAM(0x1f), 0));
-
-    // Skip AD22 loop(s)
-    // breakpoints.add(true, 0x950d, Action::Set(Register::PC, 0x951e));
-    // breakpoints.add(true, 0x9513, Action::Set("PC".to_string(), 0x9516)); //works
-    // breakpoints.add(true, 0x9513, Action::Set("PC".to_string(), 0x951e));
-    // breakpoints.add(true, 0x957c, Action::Set("PC".to_string(), 0x9581));
-    // breakpoints.add(true, 0x3bae, Action::Set("PC".to_string(), 0x3bcb));
-    // let mut once = std::sync::Once::new();
-    // breakpoints.add(
-    //     true,
-    //     0x950a,
-    //     Action::Run(Box::new(move |cpu| {
-    //         once.call_once(|| {
-    //             trace!("Sending F3...");
-    //             // _ = keyboard_pipe.send(0x58);
-    //             // _ = keyboard_pipe.send(0x58);
-    //             // _ = keyboard_pipe.send(0xB4);
-    //             // let byte_24 = cpu.internal_ram(0x24);
-    //             // cpu.internal_ram_write(0x24, byte_24 | 1);
-    //             // cpu.internal_ram_write(0x24, byte_24 | 2);
-    //         });
-    //     })),
-    // );
+    // breakpoints.add(true, 0x94ee, Action::Set(Register::B, 0));
+    // breakpoints.add(true, 0x94ee, Action::Set(Register::RAM(0x1f), 0));
 
     breakpoints.add(
         true,
@@ -415,12 +580,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Action::Log("Keyboard test (success)".to_string()),
     );
 
-    // Skip EEPROM read
-    // breakpoints.add(true, 0x1143, Action::SetTraceInstructions(true));
-    breakpoints.add(true, 0x5b6d, Action::Set(Register::PC, 0x5b8d));
+    breakpoints.add(true, 0x5b6d, Action::Log("NVR read".to_string()));
+    breakpoints.add(true, 0x5b5e, Action::Log("NVR read checksum".to_string()));
+    breakpoints.add(true, 0x5b5e, Action::TraceRegisters);
+    breakpoints.add(true, 0x5b90, Action::Log("NVR write".to_string()));
+    breakpoints.add(true, 0x5b90, Action::TraceRegisters);
 
-    let mut context = (ports, ram, code);
-    info!("CPU initialized, PC = 0x{:04X}", cpu.pc_ext(&context));
+    breakpoints.add(true, 0x5c60, Action::Log("NVR fail 1".to_string()));
+    breakpoints.add(true, 0x5cba, Action::Log("NVR fail 2".to_string()));
+    breakpoints.add(true, 0x5ab3, Action::Log("NVR fail 3".to_string()));
+    breakpoints.add(true, 0x5a59, Action::Log("NVR fail 4".to_string()));
+
+    info!("CPU initialized, PC = 0x{:04X}", cpu.pc_ext(&system));
 
     if args.debug {
         use i8051_debug_tui::{Debugger, DebuggerState, crossterm};
@@ -440,45 +611,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     break;
                 }
                 DebuggerState::Paused => {
-                    debugger.render(&cpu, &mut context)?;
+                    debugger.render(&cpu, &mut system)?;
                     let event = crossterm::event::poll(Duration::from_millis(100))?;
                     if event {
                         let event = crossterm::event::read()?;
-                        if debugger.handle_event(event, &mut cpu, &mut context) {
-                            breakpoints.run(true, &mut cpu, &mut context);
-                            cpu.step(&mut context);
-                            keyboard.tick();
-                            context.0.1.1.0.tick(&mut cpu);
-                            context.0.1.0.tick();
-                            let tick = context.0.1.1.1.1.0.prepare_tick(&mut cpu, &context);
-                            context.0.1.1.1.1.0.tick(&mut cpu, tick);
-                            breakpoints.run(false, &mut cpu, &mut context);
-                            debugger.render(&cpu, &mut context)?;
+                        if debugger.handle_event(event, &mut cpu, &mut system) {
+                            system.step(&mut cpu);
                         }
                     }
                 }
                 DebuggerState::Running => {
                     instruction_count += 1;
                     if instruction_count % 0x10000 == 0 {
-                        debugger.render(&cpu, &mut context)?;
+                        debugger.render(&cpu, &mut system)?;
                         let event = crossterm::event::poll(Duration::from_millis(0))?;
                         if event {
                             let event = crossterm::event::read()?;
-                            if debugger.handle_event(event, &mut cpu, &mut context) {
-                                cpu.step(&mut context);
-                                debugger.render(&cpu, &mut context)?;
+                            if debugger.handle_event(event, &mut cpu, &mut system) {
+                                system.step(&mut cpu);
+                                debugger.render(&cpu, &mut system)?;
                             }
                         }
                     }
-                    breakpoints.run(true, &mut cpu, &mut context);
-                    cpu.step(&mut context);
-                    keyboard.tick();
-                    context.0.1.1.0.tick(&mut cpu);
-                    context.0.1.0.tick();
-                    let tick = context.0.1.1.1.1.0.prepare_tick(&mut cpu, &context);
-                    context.0.1.1.1.1.0.tick(&mut cpu, tick);
-                    breakpoints.run(false, &mut cpu, &mut context);
-                    if debugger.breakpoints().contains(&cpu.pc_ext(&context)) {
+                    system.step(&mut cpu);
+                    if debugger.breakpoints().contains(&cpu.pc_ext(&system)) {
                         debugger.pause();
                     }
                 }
@@ -495,20 +651,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // CPU execution loop
         let mut running = true;
-        let mut hex = false;
+        let mut compose_special_key = false;
+        let mut hex = DisplayMode::Normal;
         loop {
             if running {
-                let pc = cpu.pc_ext(&context);
-                breakpoints.run(true, &mut cpu, &mut context);
-                cpu.step(&mut context);
-                breakpoints.run(false, &mut cpu, &mut context);
-                keyboard.tick();
-                context.0.1.1.0.tick(&mut cpu);
-                context.0.1.0.tick();
-                let tick = context.0.1.1.1.1.0.prepare_tick(&mut cpu, &context);
-                context.0.1.1.1.1.0.tick(&mut cpu, tick);
+                let pc = cpu.pc_ext(&system);
+                system.step(&mut cpu);
 
-                let new_pc = cpu.pc_ext(&context);
+                let new_pc = cpu.pc_ext(&system);
                 if new_pc & 0xffff == 0 {
                     warn!("CPU reset detected at PC = 0x{:04X}", pc);
                 }
@@ -524,84 +674,177 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             if args.display && (instruction_count % 0x100 == 0 || !running) {
                 if crossterm::event::poll(Duration::from_millis(0))? {
+                    let start = Instant::now();
                     let event = crossterm::event::read()?;
-                    if let Event::Key(key) = event
-                        && key.modifiers.is_empty()
-                    {
-                        match key.code {
-                            KeyCode::Char('q') => {
-                                crossterm::terminal::disable_raw_mode()?;
-                                crossterm::execute!(
-                                    io::stdout(),
-                                    crossterm::terminal::LeaveAlternateScreen,
-                                )?;
-                                break;
+                    if start.elapsed() > Duration::from_millis(100) {
+                        warn!("Event read took too long: {:?}", start.elapsed());
+                    }
+                    if let Event::Key(key) = event {
+                        let sender = system.keyboard.sender();
+
+                        if compose_special_key {
+                            compose_special_key = false;
+                            if key.modifiers.is_empty() {
+                                match key.code {
+                                    KeyCode::Char('1') => {
+                                        _ = sender.send_special_key(SpecialKey::F1);
+                                    }
+                                    KeyCode::Char('2') => {
+                                        _ = sender.send_special_key(SpecialKey::F2);
+                                    }
+                                    KeyCode::Char('3') => {
+                                        _ = sender.send_special_key(SpecialKey::F3);
+                                    }
+                                    KeyCode::Char('4') => {
+                                        _ = sender.send_special_key(SpecialKey::F4);
+                                    }
+                                    KeyCode::Char('5') => {
+                                        _ = sender.send_special_key(SpecialKey::F5);
+                                    }
+                                    _ => {}
+                                }
                             }
-                            KeyCode::Char(' ') => {
-                                running = !running;
+                        }
+                        if key.modifiers == KeyModifiers::CONTROL {
+                            match key.code {
+                                KeyCode::Char('c') => {
+                                    crossterm::terminal::disable_raw_mode()?;
+                                    crossterm::execute!(
+                                        io::stdout(),
+                                        crossterm::terminal::LeaveAlternateScreen,
+                                    )?;
+                                    break;
+                                }
+                                KeyCode::Char('f') => {
+                                    compose_special_key = true;
+                                }
+                                KeyCode::Char(' ') => {
+                                    running = !running;
+                                }
+                                KeyCode::Char('h') => {
+                                    hex = match hex {
+                                        DisplayMode::Normal => DisplayMode::NibbleTriplet,
+                                        DisplayMode::NibbleTriplet => DisplayMode::Bytes,
+                                        DisplayMode::Bytes => DisplayMode::Normal,
+                                    };
+                                }
+                                _ => {}
                             }
-                            KeyCode::Char('h') => {
-                                hex = !hex;
+                        }
+                        if key.modifiers == KeyModifiers::SHIFT {
+                            match key.code {
+                                KeyCode::Char(c) => {
+                                    _ = sender.send_char(c);
+                                }
+                                _ => {}
                             }
-                            KeyCode::Left => {
-                                _ = keyboard_pipe.send(0xa7);
+                        }
+                        if key.modifiers.is_empty() {
+                            match key.code {
+                                KeyCode::Char(c) => {
+                                    _ = sender.send_char(c);
+                                }
+                                KeyCode::Left => {
+                                    _ = sender.send_special_key(SpecialKey::Left);
+                                }
+                                KeyCode::Right => {
+                                    _ = sender.send_special_key(SpecialKey::Right);
+                                }
+                                KeyCode::Up => {
+                                    _ = sender.send_special_key(SpecialKey::Up);
+                                }
+                                KeyCode::Down => {
+                                    _ = sender.send_special_key(SpecialKey::Down);
+                                }
+                                KeyCode::Backspace => {
+                                    _ = sender.send_special_key(SpecialKey::Delete);
+                                }
+                                KeyCode::Enter => {
+                                    _ = sender.send_special_key(SpecialKey::Return);
+                                }
+                                KeyCode::Esc => {
+                                    sender.send_escape();
+                                }
+
+                                KeyCode::F(1) => {
+                                    _ = sender.send_special_key(SpecialKey::F1);
+                                }
+                                KeyCode::F(2) => {
+                                    _ = sender.send_special_key(SpecialKey::F2);
+                                }
+                                KeyCode::F(3) => {
+                                    _ = sender.send_special_key(SpecialKey::F3);
+                                }
+                                KeyCode::F(4) => {
+                                    _ = sender.send_special_key(SpecialKey::F4);
+                                }
+                                KeyCode::F(5) => {
+                                    _ = sender.send_special_key(SpecialKey::F5);
+                                }
+                                _ => {}
                             }
-                            KeyCode::Right => {
-                                _ = keyboard_pipe.send(0xa8);
-                            }
-                            KeyCode::Up => {
-                                _ = keyboard_pipe.send(0xaa);
-                            }
-                            KeyCode::Down => {
-                                _ = keyboard_pipe.send(0xa9);
-                            }
-                            KeyCode::Enter => {
-                                _ = keyboard_pipe.send(0xbd);
-                            }
-                            KeyCode::F(3) | KeyCode::Char('3') => {
-                                _ = keyboard_pipe.send(0x58);
-                            }
-                            _ => {}
                         }
                     }
                 }
-                let vram = &context.1.vram[0..];
-                terminal.draw(|f| {
-                    let screen = Screen::new(vram).hex_mode(hex);
-                    f.render_widget(screen, f.area());
-                    let stage = Span::styled(
-                        format!("{}", cpu.internal_ram[0x7e]),
-                        Style::default().fg(Color::LightBlue),
-                    );
-                    let stage = stage.into_right_aligned_line();
-                    f.render_widget(stage, f.area());
-                    let mut mapper_line = Line::default();
-                    for i in 0..16 {
-                        let attr = context.1.mapper[i];
-                        let style = Style::default().fg(Color::Indexed(attr));
-                        let text = Span::styled(format!("{:02X} ", context.1.mapper[i]), style);
-                        mapper_line.push_span(text);
-                    }
-                    f.render_widget(mapper_line, f.area());
 
-                    let vram = &context.1.vram[0..256];
-                    for i in 0..8 {
-                        let mut vram_line = Line::default();
-                        for j in 0..32 {
-                            let attr = vram[i * 32 + j];
-                            let style = Style::default().fg(Color::Indexed(attr));
-                            let text = Span::styled(format!("{:02X} ", attr), style);
-                            vram_line.push_span(text);
-                        }
-                        f.render_widget(
-                            vram_line,
-                            f.area().offset(Offset {
-                                x: 0,
-                                y: (f.area().height as i32 - 8) + i as i32,
-                            }),
+                let vram = &system.memory.vram[0..];
+                // Skip redrawing if the chargen is disabled
+                if system.memory.mapper[6] & 0xf0 != 0xf0 {
+                    terminal.draw(|f| {
+                        let screen = Screen::new(vram).display_mode(hex);
+                        f.render_widget(screen, f.area());
+                        let stage = Span::styled(
+                            format!(
+                                "{:b}/{:02X}",
+                                cpu.internal_ram[0x1f], cpu.internal_ram[0x7e]
+                            ),
+                            Style::default().fg(Color::LightBlue),
                         );
-                    }
-                })?;
+                        let stage = stage.into_right_aligned_line();
+                        f.render_widget(stage, f.area());
+
+                        if args.show_mapper {
+                            let mut mapper_line = Line::default();
+                            for i in 0..16 {
+                                let attr = system.memory.mapper[i];
+                                let style = Style::default().fg(Color::Indexed(attr));
+                                let text = if i == 6 || i == 9 || i == 10 || i == 11 || i == 12 {
+                                    Span::styled(
+                                        format!(
+                                            "{:02X}/{:02X} ",
+                                            system.memory.mapper[i], system.memory.mapper2[i]
+                                        ),
+                                        style,
+                                    )
+                                } else {
+                                    Span::styled(format!("{:02X} ", system.memory.mapper[i]), style)
+                                };
+                                mapper_line.push_span(text);
+                            }
+                            f.render_widget(mapper_line, f.area());
+                        }
+
+                        if args.show_vram {
+                            let vram = &system.memory.vram[0..256];
+                            for i in 0..8 {
+                                let mut vram_line = Line::default();
+                                for j in 0..32 {
+                                    let attr = vram[i * 32 + j];
+                                    let style = Style::default().fg(Color::Indexed(attr));
+                                    let text = Span::styled(format!("{:02X} ", attr), style);
+                                    vram_line.push_span(text);
+                                }
+                                f.render_widget(
+                                    vram_line,
+                                    f.area().offset(Offset {
+                                        x: 0,
+                                        y: (f.area().height as i32 - 8) + i as i32,
+                                    }),
+                                );
+                            }
+                        }
+                    })?;
+                }
             }
         }
     }
