@@ -11,49 +11,14 @@ use i8051::sfr::SFR_P3;
 use i8051::{CpuView, MemoryMapper, PortMapper, ReadOnlyMemoryMapper};
 use tracing::{info, trace};
 
+use crate::duart::DUART;
+use crate::duart::ReadRegister;
+use crate::duart::WriteRegister;
 use crate::nvr::Nvr;
 use crate::video::Mapper;
 use crate::video::SyncGen;
 use crate::video::TIMING_60HZ;
 use crate::video::TIMING_70HZ;
-
-const READ_2681: &[&str] = &[
-    "Mode Register A (MR1A, MR2A)",
-    "Status Register A (SRA)",
-    "BRG Extend",
-    "Rx Holding Register A (RHRA)",
-    "Input Port Change Register (IPCR)",
-    "Interrupt Status Register (ISR)",
-    "Counter/Timer Upper Value (CTU)",
-    "Counter/Timer Lower Value (CTL)",
-    "Mode Register B (MR1B, MR2B)",
-    "Status Register B (SRB)",
-    "1×/16× Test",
-    "Rx Holding Register B (RHRB)",
-    "Use for scratch pad",
-    "Input Ports IP0 to IP6",
-    "Start Counter Command",
-    "Stop Counter Command",
-];
-
-const WRITE_2681: &[&str] = &[
-    "Mode Register A (MR1A, MR2A)",
-    "Clock Select Register A (CSRA)",
-    "Command Register A (CRA)",
-    "Tx Holding Register A (THRA)",
-    "Aux. Control Register (ACR)",
-    "Interrupt Mask Register (IMR)",
-    "C/T Upper Preset Value (CRUR)",
-    "C/T Lower Preset Value (CTLR)",
-    "Mode Register B (MR1B, MR2B)",
-    "Clock Select Register B (CSRB)",
-    "Command Register B (CRB)",
-    "Tx Holding Register B (THRB)",
-    "Use for scratch pad",
-    "Output Port Conf. Register (OPCR)",
-    "Set Output Port Bits Command",
-    "Reset Output Port Bits Command",
-];
 
 pub struct Bank {
     pub bank: Rc<Cell<bool>>,
@@ -217,12 +182,11 @@ pub struct RAM {
     pub input_queue: RefCell<Vec<u8>>,
     pub sync: SyncHolder,
     pub nvr: Nvr,
-    pub duart_input: u8,
-    pub duart_output_inv: u8,
+    pub duart: DUART,
 }
 
 impl RAM {
-    pub fn new(rom_bank: Rc<Cell<bool>>, sync: SyncHolder) -> Self {
+    pub fn new(rom_bank: Rc<Cell<bool>>, sync: SyncHolder, duart: DUART) -> Self {
         let sram = [0; 0x8000];
         let vram = [0; 0x20000];
         let mapper = Mapper::new();
@@ -236,8 +200,7 @@ impl RAM {
             input_queue: RefCell::new("x".to_string().into_bytes()),
             sync,
             nvr: Nvr::new(),
-            duart_input: 0,
-            duart_output_inv: 0,
+            duart,
         }
     }
 }
@@ -338,13 +301,15 @@ impl RAM {
     }
 
     pub fn tick(&mut self) {
-        let nvrtxd = self.duart_output_inv & 1 << 6 == 0;
-        let nvrclk = self.duart_output_inv & 1 << 5 == 0;
-        let nvrcs = self.duart_output_inv & 1 << 4 == 0;
+        let nvrtxd = self.duart.output_bits_inv & 1 << 6 == 0;
+        let nvrclk = self.duart.output_bits_inv & 1 << 5 == 0;
+        let nvrcs = self.duart.output_bits_inv & 1 << 4 == 0;
         let (nvrrxd, nvrrdy) = self.nvr.tick(nvrcs, nvrclk, nvrtxd);
 
-        self.duart_input = self.duart_input & !(1 << 4) | (nvrrdy as u8) << 4;
-        self.duart_input = self.duart_input & !(1 << 3) | (nvrrxd as u8) << 3;
+        self.duart.input_bits = self.duart.input_bits & !(1 << 4) | (nvrrdy as u8) << 4;
+        self.duart.input_bits = self.duart.input_bits & !(1 << 3) | (nvrrxd as u8) << 3;
+
+        let int1 = self.duart.tick();
     }
 }
 
@@ -369,37 +334,10 @@ impl MemoryMapper for RAM {
                 x => self.mapper.get(x as _),
             },
             MemoryTarget::DUART => {
-                trace!(
-                    "DUART RAM read from {} @ {:05X}",
-                    READ_2681[offset as usize], pc
-                );
-
-                if addr == 0x7fe5 {
-                    if self.input_queue.borrow().len() > 0 {
-                        return 0b1111_1101;
-                    } else {
-                        return 0b0001_1001;
-                    }
-                }
-                if addr == 0x7fe1 {
-                    return 0xff;
-                }
-                if addr == 0x7fe3 {
-                    return 0xff;
-                }
-                if addr == 0x7fe9 {
-                    return 0b0000_0000;
-                }
-                if addr == 0x7fed {
-                    return self.duart_input;
-                }
-                if addr == 0x7feb {
-                    let next = self.input_queue.borrow_mut().remove(0);
-                    trace!("RAM Next: {:?}", next as char);
-                    return next;
-                }
-
-                return 0;
+                let read = ReadRegister::try_from(offset as u8).unwrap();
+                let value = self.duart.read(read);
+                trace!("DUART read {read:?} = {:02X} @ {:05X}", value, pc);
+                value
             }
             MemoryTarget::Peripheral => {
                 trace!(
@@ -476,16 +414,9 @@ impl MemoryMapper for RAM {
                 self.mapper.set(offset as _, value);
             }
             MemoryTarget::DUART => {
-                trace!(
-                    "DUART write: {} 0x{:04X} = 0x{:02X}",
-                    WRITE_2681[offset as usize], addr, value
-                );
-                if offset == 0xe {
-                    self.duart_output_inv |= value;
-                }
-                if offset == 0xf {
-                    self.duart_output_inv &= !value;
-                }
+                let reg = WriteRegister::try_from(offset as u8).unwrap();
+                trace!("DUART write {reg:?} = {:02X} @ {:05X}", value, pc);
+                self.duart.write(reg, value);
             }
             MemoryTarget::Peripheral => {
                 trace!("Peripheral write: 0x{:04X} = 0x{:02X}", addr, value);

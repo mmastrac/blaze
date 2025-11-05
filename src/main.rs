@@ -1,25 +1,25 @@
 use clap::Parser;
 use hex_literal::hex;
 use i8051::breakpoint::{Action, Breakpoints};
-use i8051::peripheral::{Serial, Timer};
+use i8051::peripheral::{P3_INT1, Serial, Timer};
 use i8051::sfr::{SFR_P1, SFR_P2, SFR_P3};
 use ratatui::crossterm::event::{Event, KeyCode, KeyModifiers};
 use ratatui::layout::Offset;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use std::fs::{self, File};
-use std::io::{self, IsTerminal, stdout};
-use std::mem;
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, IsTerminal, Read, Write, stdout};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
 use std::time::{Duration, Instant};
-use tracing::{Level, info, warn};
+use std::{mem, thread};
+use tracing::{Level, error, info, trace, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm;
 
+mod duart;
 mod lk201;
 mod memory;
 mod nvr;
@@ -30,7 +30,8 @@ use memory::{Bank, RAM, ROM, VideoProcessor};
 
 use i8051::{Cpu, CpuContext, CpuView, DefaultPortMapper, PortMapper, Register};
 
-use crate::lk201::{LK201, LK201Sender, SpecialKey};
+use crate::duart::{DUART, DUARTChannel};
+use crate::lk201::{LK201, SpecialKey};
 use crate::memory::DiagnosticMonitor;
 use crate::screen::{DisplayMode, Screen};
 
@@ -51,6 +52,14 @@ struct Args {
     /// Display the video output
     #[arg(long)]
     display: bool,
+
+    /// List of Comm1 read/write pipe pairs: specify as `--comm1 rx_path tx_path`; can be repeated up to 2 times.
+    #[arg(long = "comm1", num_args=0..=2, value_names=["RX", "TX"])]
+    comm1: Vec<PathBuf>,
+
+    /// List of Comm2 read/write pipe pairs: specify as `--comm2 rx_path tx_path`; can be repeated up to 2 times.
+    #[arg(long = "comm2", num_args=0..=2, value_names=["RX", "TX"])]
+    comm2: Vec<PathBuf>,
 
     /// Display the video RAM
     #[arg(long, requires = "display")]
@@ -81,6 +90,107 @@ fn parse_hex_address(s: &str) -> Result<u32, Box<dyn std::error::Error + Send + 
     Ok(u32::from_str_radix(s, 16)?)
 }
 
+fn connect_duart_to_pipe(channel: DUARTChannel, comm: Vec<PathBuf>) -> Result<(), io::Error> {
+    match comm.len() {
+        0 => {
+            // loopback
+            thread::spawn(move || {
+                loop {
+                    match channel.rx.recv() {
+                        Ok(b) => {
+                            trace!("DUART pipe loopback char {b:02X} {:?}", b as char);
+                            if !channel.tx.send(b).is_ok() {
+                                break;
+                            }
+                        }
+                        _ => break,
+                    }
+                }
+                trace!("DUART pipe loopback thread exited");
+            });
+        }
+        1 => {
+            let rx = channel.rx;
+            let tx = channel.tx;
+            eprintln!("Opening {:?} as read/write", comm[0]);
+            let mut pipe_r = OpenOptions::new().read(true).write(true).open(&comm[0])?;
+            let mut pipe_w = pipe_r.try_clone()?;
+            eprintln!("Opened!");
+            thread::spawn(move || {
+                loop {
+                    match rx.recv() {
+                        Ok(b) => {
+                            if !pipe_w.write_all(&[b]).is_ok() {
+                                break;
+                            }
+                        }
+                        _ => break,
+                    }
+                }
+                trace!("DUART pipe write thread exited");
+            });
+            thread::spawn(move || {
+                loop {
+                    let mut buf = [0; 1];
+                    match pipe_r.read(&mut buf) {
+                        Ok(1) => {
+                            if !tx.send(buf[0]).is_ok() {
+                                break;
+                            }
+                        }
+                        _ => break,
+                    }
+                }
+                trace!("DUART pipe read thread exited");
+            });
+        }
+        2 => {
+            let rx = channel.rx;
+            let tx = channel.tx;
+            let pipe_r = comm[0].clone();
+            let pipe_w = comm[1].clone();
+            thread::spawn(move || {
+                let Ok(mut pipe_w) = OpenOptions::new().write(true).open(&pipe_w) else {
+                    error!("Failed to open pipe_w: {:?}", pipe_w);
+                    return;
+                };
+                loop {
+                    match rx.recv() {
+                        Ok(b) => {
+                            if !pipe_w.write_all(&[b]).is_ok() {
+                                break;
+                            }
+                        }
+                        _ => break,
+                    }
+                }
+                trace!("DUART pipe write thread exited");
+            });
+            thread::spawn(move || {
+                let Ok(mut pipe_r) = OpenOptions::new().read(true).open(&pipe_r) else {
+                    error!("Failed to open pipe_r: {:?}", pipe_r);
+                    return;
+                };
+                loop {
+                    let mut buf = [0; 1];
+                    match pipe_r.read(&mut buf) {
+                        Ok(1) => {
+                            if !tx.send(buf[0]).is_ok() {
+                                break;
+                            }
+                        }
+                        _ => break,
+                    }
+                }
+                trace!("DUART pipe read thread exited");
+            });
+        }
+        _ => unreachable!(),
+    }
+
+    Ok(())
+}
+
 struct System {
     rom: ROM,
     memory: RAM,
@@ -102,13 +212,20 @@ impl System {
     fn new(
         rom: &Path,
         nvr: Option<&Path>,
+        comm1: Vec<PathBuf>,
+        comm2: Vec<PathBuf>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let bank = Bank::default();
         info!("Loading ROM into memory...");
         let rom = ROM::new(&rom, bank.bank.clone())?;
         let video_row = VideoProcessor::new();
         let (serial, in_kbd, out_kbd) = Serial::new(60);
-        let mut memory = RAM::new(bank.bank.clone(), video_row.sync.clone());
+        let (duart, channel_a, channel_b) = DUART::new();
+
+        connect_duart_to_pipe(channel_a, comm1)?;
+        connect_duart_to_pipe(channel_b, comm2)?;
+
+        let mut memory = RAM::new(bank.bank.clone(), video_row.sync.clone(), duart);
         let mut nvr_file = None;
         if let Some(nvr) = nvr {
             nvr_file = Some(nvr.to_owned());
@@ -164,11 +281,29 @@ impl System {
         breakpoints.run(true, cpu, self);
         mem::swap(&mut self.breakpoints, &mut breakpoints);
 
+        let prev_0x1f = cpu.internal_ram[0x1f];
         cpu.step(self);
+        let new_0x1f = cpu.internal_ram[0x1f];
+        if prev_0x1f != new_0x1f {
+            info!(
+                "0x1f changed from {prev_0x1f:02X} to {new_0x1f:02X} @ {:04X}",
+                cpu.pc_ext(self)
+            );
+        }
 
         self.memory.tick();
         self.keyboard.tick();
         self.serial.tick(cpu);
+        let prev_p3 = self.video_row.p3_read;
+        self.video_row.p3_read &= !P3_INT1;
+        if !self.memory.duart.interrupt {
+            self.video_row.p3_read |= P3_INT1;
+            if prev_p3 & P3_INT1 == 0 {
+                trace!("DUART interrupt cleared");
+            }
+        } else if prev_p3 & P3_INT1 != 0 {
+            trace!("DUART interrupt");
+        }
         self.video_row.tick();
         let tick = self.timer.prepare_tick(cpu, self);
         self.timer.tick(cpu, tick);
@@ -339,7 +474,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start_time = Instant::now();
     let mut instruction_count = 0;
 
-    let mut system = System::new(&args.rom, args.nvr.as_deref()).unwrap();
+    let mut system = System::new(&args.rom, args.nvr.as_deref(), args.comm1, args.comm2).unwrap();
 
     // Enable tracing if requested
     // if args.trace && args.verbose {
@@ -438,8 +573,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     breakpoints.add(true, 0x11009, Action::Log("KBD: Got ack".to_string()));
 
-    breakpoints.add(true, 0xf0d, Action::Log("Update DUART bits".to_string()));
-    breakpoints.add(true, 0x10f0d, Action::Log("Update DUART bits".to_string()));
+    // breakpoints.add(true, 0xf0d, Action::Log("Update DUART bits".to_string()));
+    // breakpoints.add(true, 0x10f0d, Action::Log("Update DUART bits".to_string()));
 
     breakpoints.add(true, 0x15ad0, Action::Log("Testing ROM Bank 1".to_string()));
     breakpoints.add(true, 0x20ca, Action::Log("Testing ROM Bank 0".to_string()));
@@ -453,9 +588,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     breakpoints.add(true, 0x6ad9, Action::Log("Testing completed".to_string()));
     // breakpoints.add(true, 0x6ad9, Action::SetTraceInstructions(true));
     // Force tests to pass
-    breakpoints.add(true, 0x6ad9, Action::Set(Register::PC, 0x6b09));
-    breakpoints.add(true, 0x94ee, Action::Set(Register::B, 0));
-    breakpoints.add(true, 0x94ee, Action::Set(Register::RAM(0x1f), 0));
+    // breakpoints.add(true, 0x6ad9, Action::Set(Register::PC, 0x6b09));
+    // breakpoints.add(true, 0x94ee, Action::Set(Register::B, 0));
+    // breakpoints.add(true, 0x94ee, Action::Set(Register::RAM(0x1f), 0));
+
+    breakpoints.add(true, 0xcdf2, Action::Log("Testing DUART".to_string()));
 
     breakpoints.add(
         true,
