@@ -599,6 +599,25 @@ impl LK201Sender {
         _ = self.send.send(key as u8);
     }
 
+    pub fn send_ctrl_special_key(&self, key: SpecialKey) {
+        _ = self.send.send(0xaf); // ctrl
+        _ = self.send.send(key as u8);
+        _ = self.send.send(0xb3); // all up
+    }
+
+    pub fn send_shift_special_key(&self, key: SpecialKey) {
+        _ = self.send.send(0xae); // shift
+        _ = self.send.send(key as u8);
+        _ = self.send.send(0xb3); // all up
+    }
+
+    pub fn send_shift_ctrl_special_key(&self, key: SpecialKey) {
+        _ = self.send.send(0xaf); // ctrl
+        _ = self.send.send(0xae); // shift
+        _ = self.send.send(key as u8);
+        _ = self.send.send(0xb3); // all up
+    }
+
     pub fn send_escape(&self) {
         _ = self.send.send(0xaf); // ctrl
         _ = self.send.send(0xcb); // 3

@@ -5,8 +5,11 @@ use ratatui::{
     widgets::Widget,
 };
 
+use crate::video::Mapper;
+
 pub struct Screen<'a> {
     vram: &'a [u8],
+    mapper: &'a Mapper,
     display_mode: DisplayMode,
 }
 
@@ -18,9 +21,10 @@ pub enum DisplayMode {
 }
 
 impl<'a> Screen<'a> {
-    pub fn new(vram: &'a [u8]) -> Self {
+    pub fn new(vram: &'a [u8], mapper: &'a Mapper) -> Self {
         Self {
             vram,
+            mapper,
             display_mode: DisplayMode::Normal,
         }
     }
@@ -35,12 +39,15 @@ impl<'a> Widget for Screen<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let vram = self.vram;
         let vram_base = (vram[0x73] as usize) << 8;
-        let hex = self.display_mode != DisplayMode::Normal;
 
         let mut line = [0_u16; 256];
         let mut attr = [0_u8; 256];
 
-        for row_idx in 0..area.height.min(48) {
+        let Some(rows) = self.mapper.row_count(&vram) else {
+            return;
+        };
+
+        for row_idx in 0..rows as u16 {
             let row = ((vram[vram_base + row_idx as usize * 2] as u16) >> 1) << 8;
             // Bit 2: double width
             // Bit 1: swap between screen 0 and screen 1 attributes
@@ -71,7 +78,6 @@ impl<'a> Widget for Screen<'a> {
                     }
                 }
             }
-
             // Second segment: bytes 128-220
             for i in 128..221 {
                 let char = vram[row as usize + i];
@@ -142,7 +148,7 @@ impl<'a> Widget for Screen<'a> {
                             col += 1;
                         }
                     }
-                    for char_code in line.iter().take(132) {
+                    for (i, char_code) in line.iter().take(132).enumerate() {
                         let hex_str = format!("{:03X}", char_code);
                         for ch in hex_str.chars() {
                             if col < area.width {
@@ -150,7 +156,11 @@ impl<'a> Widget for Screen<'a> {
                                     buf.cell_mut((area.left() + col, area.top() + row_idx))
                                 {
                                     cell.set_symbol(&ch.to_string());
-                                    cell.set_style(Style::default());
+                                    cell.set_style(if i % 2 == 0 {
+                                        Style::default()
+                                    } else {
+                                        Style::default().bold()
+                                    });
                                 }
                                 col += 1;
                             }
@@ -158,29 +168,38 @@ impl<'a> Widget for Screen<'a> {
                     }
                 }
                 DisplayMode::Normal => {
-                    // Character mode: show row number and characters
-                    let row_header = format!("{:02X}|", row >> 8);
-
-                    let mut col = 0;
-                    for ch in row_header.chars() {
-                        if col < area.width {
-                            if let Some(cell) =
-                                buf.cell_mut((area.left() + col, area.top() + row_idx))
-                            {
-                                cell.set_symbol(&ch.to_string());
-                                cell.set_style(Style::default());
-                            }
-                            col += 1;
-                        }
-                    }
-
                     // Render characters
+                    let mut col = 0;
                     for i in 0..132.min((area.width - col) as usize) {
                         let char_code = line[i] & 0xff;
-                        let ch = if char_code == 0 || char_code == 0x98 {
+                        let ch = if line[i] & 0x100 != 0 {
+                            match char_code {
+                                0x9c => 'S',
+                                0x0d => 'H',
+                                0x54 => 'e',
+                                0x09 => 's',
+                                0x52 => 'd',
+                                0x55 => 'i',
+                                0x6d => 'l',
+                                0x7f => 'o',
+                                0x75 => 'n',
+                                0x20 => '1',
+                                0x38 => '2',
+                                _ => '.',
+                            }
+                        } else if char_code == 0 || char_code == 0x98 {
                             ' '
                         } else if char_code < 0x20 || char_code > 0x7e {
-                            '.'
+                            match char_code {
+                                0x0d => '╭', // unicode box corner
+                                0x0c => '╮', // unicode box corner
+                                0x0e => '╰', // unicode box corner
+                                0x0b => '╯', // unicode box corner
+                                0x12 => '─', // unicode box horizontal
+                                0x19 => '│', // unicode box vertical
+                                0xa9 => '©', // copyright symbol
+                                _ => '.',
+                            }
                         } else {
                             char::from(char_code as u8)
                         };
@@ -199,7 +218,8 @@ impl<'a> Widget for Screen<'a> {
                                 style = style.underlined();
                             }
                             if attr[i] & 2 != 0 {
-                                style = style.bold();
+                                // selective erase protection mode
+                                style = style.bg(Color::Blue);
                             }
                             if attr[i] & 8 != 0 {
                                 style = style.bold();
@@ -208,7 +228,11 @@ impl<'a> Widget for Screen<'a> {
                                 style = style.reversed();
                             }
                             if attr[i] & 32 != 0 {
-                                style = style.rapid_blink();
+                                // This doesn't seem quite right: the status bar shouldn't blink and
+                                // the setup screen's header shouldn't either.
+                                // if !self.mapper.is_blink() {
+                                //     cell.set_symbol(" ");
+                                // }
                             }
                             cell.set_style(style);
                         }

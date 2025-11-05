@@ -2,6 +2,7 @@ use clap::Parser;
 use hex_literal::hex;
 use i8051::breakpoint::{Action, Breakpoints};
 use i8051::peripheral::{Serial, Timer};
+use i8051::sfr::{SFR_P1, SFR_P2, SFR_P3};
 use ratatui::crossterm::event::{Event, KeyCode, KeyModifiers};
 use ratatui::layout::Offset;
 use ratatui::style::{Color, Modifier, Style};
@@ -27,7 +28,7 @@ mod video;
 
 use memory::{Bank, RAM, ROM, VideoProcessor};
 
-use i8051::{Cpu, CpuContext, CpuView, DefaultPortMapper, PortMapper};
+use i8051::{Cpu, CpuContext, CpuView, DefaultPortMapper, PortMapper, Register};
 
 use crate::lk201::{LK201, LK201Sender, SpecialKey};
 use crate::memory::DiagnosticMonitor;
@@ -411,7 +412,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     breakpoints.add(
         true,
-        0x5ed1,
+        0x15ed1,
+        Action::Log("Testing keyboard serial loopback".to_string()),
+    );
+
+    breakpoints.add(
+        true,
+        0x16153,
         Action::Log("Testing keyboard serial".to_string()),
     );
 
@@ -446,9 +453,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     breakpoints.add(true, 0x6ad9, Action::Log("Testing completed".to_string()));
     // breakpoints.add(true, 0x6ad9, Action::SetTraceInstructions(true));
     // Force tests to pass
-    // breakpoints.add(true, 0x6ad9, Action::Set(Register::PC, 0x6b09));
-    // breakpoints.add(true, 0x94ee, Action::Set(Register::B, 0));
-    // breakpoints.add(true, 0x94ee, Action::Set(Register::RAM(0x1f), 0));
+    breakpoints.add(true, 0x6ad9, Action::Set(Register::PC, 0x6b09));
+    breakpoints.add(true, 0x94ee, Action::Set(Register::B, 0));
+    breakpoints.add(true, 0x94ee, Action::Set(Register::RAM(0x1f), 0));
 
     breakpoints.add(
         true,
@@ -672,7 +679,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 instruction_count += 1;
             }
 
-            if args.display && (instruction_count % 0x100 == 0 || !running) {
+            if args.display && (instruction_count % 0x1000 == 0 || !running) {
                 if crossterm::event::poll(Duration::from_millis(0))? {
                     let start = Instant::now();
                     let event = crossterm::event::read()?;
@@ -701,6 +708,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     KeyCode::Char('5') => {
                                         _ = sender.send_special_key(SpecialKey::F5);
                                     }
+                                    KeyCode::Char('c') => {
+                                        _ = sender.send_special_key(SpecialKey::Lock);
+                                    }
                                     _ => {}
                                 }
                             }
@@ -728,6 +738,53 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         DisplayMode::Bytes => DisplayMode::Normal,
                                     };
                                 }
+                                KeyCode::Char('d') => {
+                                    fs::write("/tmp/vram.bin", &system.memory.vram[0..])?;
+                                }
+                                KeyCode::F(1) => {
+                                    _ = sender.send_ctrl_special_key(SpecialKey::F1);
+                                }
+                                KeyCode::F(2) => {
+                                    _ = sender.send_ctrl_special_key(SpecialKey::F2);
+                                }
+                                KeyCode::F(3) => {
+                                    _ = sender.send_ctrl_special_key(SpecialKey::F3);
+                                }
+                                KeyCode::F(4) => {
+                                    _ = sender.send_ctrl_special_key(SpecialKey::F4);
+                                }
+                                KeyCode::F(5) => {
+                                    _ = sender.send_ctrl_special_key(SpecialKey::F5);
+                                }
+                                KeyCode::Up => {
+                                    _ = sender.send_ctrl_special_key(SpecialKey::Up);
+                                }
+                                KeyCode::Down => {
+                                    _ = sender.send_ctrl_special_key(SpecialKey::Down);
+                                }
+                                KeyCode::Left => {
+                                    _ = sender.send_ctrl_special_key(SpecialKey::Left);
+                                }
+                                KeyCode::Right => {
+                                    _ = sender.send_ctrl_special_key(SpecialKey::Right);
+                                }
+                                _ => {}
+                            }
+                        }
+                        if key.modifiers == KeyModifiers::SHIFT | KeyModifiers::CONTROL {
+                            match key.code {
+                                KeyCode::Up => {
+                                    _ = sender.send_shift_ctrl_special_key(SpecialKey::Up);
+                                }
+                                KeyCode::Down => {
+                                    _ = sender.send_shift_ctrl_special_key(SpecialKey::Down);
+                                }
+                                KeyCode::Left => {
+                                    _ = sender.send_shift_ctrl_special_key(SpecialKey::Left);
+                                }
+                                KeyCode::Right => {
+                                    _ = sender.send_shift_ctrl_special_key(SpecialKey::Right);
+                                }
                                 _ => {}
                             }
                         }
@@ -735,6 +792,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             match key.code {
                                 KeyCode::Char(c) => {
                                     _ = sender.send_char(c);
+                                }
+                                KeyCode::Up => {
+                                    _ = sender.send_shift_special_key(SpecialKey::Up);
+                                }
+                                KeyCode::Down => {
+                                    _ = sender.send_shift_special_key(SpecialKey::Down);
+                                }
+                                KeyCode::Left => {
+                                    _ = sender.send_shift_special_key(SpecialKey::Left);
+                                }
+                                KeyCode::Right => {
+                                    _ = sender.send_shift_special_key(SpecialKey::Right);
                                 }
                                 _ => {}
                             }
@@ -789,9 +858,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 let vram = &system.memory.vram[0..];
                 // Skip redrawing if the chargen is disabled
-                if system.memory.mapper[6] & 0xf0 != 0xf0 {
+                if system.memory.mapper.get(6) & 0xf0 != 0xf0 {
                     terminal.draw(|f| {
-                        let screen = Screen::new(vram).display_mode(hex);
+                        let screen = Screen::new(vram, &system.memory.mapper).display_mode(hex);
                         f.render_widget(screen, f.area());
                         let stage = Span::styled(
                             format!(
@@ -806,21 +875,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if args.show_mapper {
                             let mut mapper_line = Line::default();
                             for i in 0..16 {
-                                let attr = system.memory.mapper[i];
+                                let attr = system.memory.mapper.get(i);
                                 let style = Style::default().fg(Color::Indexed(attr));
                                 let text = if i == 6 || i == 9 || i == 10 || i == 11 || i == 12 {
                                     Span::styled(
                                         format!(
                                             "{:02X}/{:02X} ",
-                                            system.memory.mapper[i], system.memory.mapper2[i]
+                                            system.memory.mapper.get(i),
+                                            system.memory.mapper.get2(i)
                                         ),
                                         style,
                                     )
                                 } else {
-                                    Span::styled(format!("{:02X} ", system.memory.mapper[i]), style)
+                                    Span::styled(
+                                        format!("{:02X} ", system.memory.mapper.get(i)),
+                                        style,
+                                    )
                                 };
                                 mapper_line.push_span(text);
                             }
+                            mapper_line.push_span(format!(
+                                "{:02X} {:02X} {:02X}",
+                                cpu.sfr(SFR_P1, &system),
+                                cpu.sfr(SFR_P2, &system),
+                                cpu.sfr(SFR_P3, &system)
+                            ));
                             f.render_widget(mapper_line, f.area());
                         }
 

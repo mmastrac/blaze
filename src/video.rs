@@ -3,12 +3,15 @@
 //! sync signal passes correctly, and the self-test for number of csync pulses
 //! per frame returns both the correct timing and correct number of pulses.
 
+/// The number of vertical lines expected by the ROM
+pub const VERTICAL_LINES: usize = 417;
+
 pub const TIMING_60HZ: Timing = Timing {
     h_active: 20,
     h_fp: 2,
     h_sync: 6,
-    h_bp: 4,       // Htot = 32
-    v_active: 417, // Expected by ROM
+    h_bp: 4,                         // Htot = 32
+    v_active: VERTICAL_LINES as u16, // Expected by ROM
     v_fp: 4,
     v_sync: 16,
     v_bp: 188, // Vtot = 625
@@ -18,8 +21,8 @@ pub const TIMING_70HZ: Timing = Timing {
     h_active: 20,
     h_fp: 2,
     h_sync: 6,
-    h_bp: 4,       // Htot = 32
-    v_active: 417, // Expected by ROM
+    h_bp: 4,                         // Htot = 32
+    v_active: VERTICAL_LINES as u16, // Expected by ROM
     v_fp: 3,
     v_sync: 16,
     v_bp: 100, // Vtot = 536
@@ -101,6 +104,102 @@ impl SyncGen {
         }
 
         csync
+    }
+}
+
+pub struct Mapper {
+    pub mapper: [u8; 16],
+    pub mapper2: [u8; 16], // 6, 9, a, b, c can be written twice
+}
+
+impl Mapper {
+    pub fn new() -> Self {
+        let mut new = Self {
+            mapper: [0; 16],
+            mapper2: [0; 16],
+        };
+        new.mapper[3] = 0xff;
+        new.mapper[4] = 0xff;
+        new.mapper[5] = 0xf4;
+        new
+    }
+
+    pub fn set(&mut self, offset: u8, value: u8) {
+        self.mapper2[offset as usize] = self.mapper[offset as usize];
+        self.mapper[offset as usize] = value;
+    }
+
+    pub fn get(&self, offset: u8) -> u8 {
+        self.mapper[offset as usize]
+    }
+
+    pub fn get2(&self, offset: u8) -> u8 {
+        self.mapper2[offset as usize]
+    }
+
+    pub fn sram_mapped(&self) -> u32 {
+        self.sram_mapped_value(self.mapper[3])
+    }
+
+    pub fn sram_mapped_value(&self, value: u8) -> u32 {
+        (value & 0x20 != 0) as u32
+    }
+
+    pub fn vram_page(&self) -> u32 {
+        self.sram_mapped_value(self.mapper[5])
+    }
+
+    pub fn vram_page_value(&self, value: u8) -> u32 {
+        (value & 0x08 != 0) as u32
+    }
+
+    pub fn row_count(&self, vram: &[u8]) -> Option<u8> {
+        let r1 = self.get(6);
+        let r2 = self.get2(6);
+
+        // Vertical refresh
+        if r1 & 0xf0 == 0xf0 || r2 & 0xf0 == 0xf0 {
+            return None;
+        }
+
+        // if r1 == r2 {
+        //     return Some(match r1 {
+        //         0xd0 => 26,
+        //         0x9a => 38,
+        //         0x78 => 50,
+        //         _ => 26,
+        //     });
+        // }
+
+        let rh1 = ((r1 & 0x0f) + 15) % 16 + 1;
+        let rh2 = ((r2 & 0x0f) + 15) % 16 + 1;
+
+        debug_assert!(rh1 > 0 && rh1 <= 16);
+        debug_assert!(rh2 > 0 && rh2 <= 16);
+
+        // Look for the row with 0x02 set as the splitter row
+        // Accumulate lines until we hit 414
+
+        let mut remaining = VERTICAL_LINES;
+        let mut screen = 0;
+        let mut count = 0;
+        for i in 0..50 * 2 {
+            let row_attrs = vram[i * 2 + 1];
+            if row_attrs & 0x02 != 0 {
+                screen = 1 - screen;
+            }
+            let rh = if screen == 0 { rh1 } else { rh2 };
+            if rh as usize > remaining {
+                return Some(count as u8);
+            }
+            remaining -= rh as usize;
+            count += 1;
+        }
+        Some(count)
+    }
+
+    pub fn is_blink(&self) -> bool {
+        self.get(3) & 0x40 != 0
     }
 }
 

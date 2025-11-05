@@ -12,6 +12,7 @@ use i8051::{CpuView, MemoryMapper, PortMapper, ReadOnlyMemoryMapper};
 use tracing::{info, trace};
 
 use crate::nvr::Nvr;
+use crate::video::Mapper;
 use crate::video::SyncGen;
 use crate::video::TIMING_60HZ;
 use crate::video::TIMING_70HZ;
@@ -210,8 +211,7 @@ impl PortMapper for DiagnosticMonitor {
 pub struct RAM {
     pub sram: [u8; 0x8000],  // 32kB
     pub vram: [u8; 0x20000], // 128kB
-    pub mapper: [u8; 16],
-    pub mapper2: [u8; 16], // 6, 9, a, b, c can be written twice
+    pub mapper: Mapper,
     pub peripheral: [u8; 0x100],
     pub rom_bank: Rc<Cell<bool>>,
     pub input_queue: RefCell<Vec<u8>>,
@@ -225,17 +225,12 @@ impl RAM {
     pub fn new(rom_bank: Rc<Cell<bool>>, sync: SyncHolder) -> Self {
         let sram = [0; 0x8000];
         let vram = [0; 0x20000];
-        let mut mapper = [0; 16];
-        let mut mapper2 = [0; 16];
+        let mapper = Mapper::new();
         let peripheral = [0; 0x100];
-        mapper[3] = 0xff;
-        mapper[4] = 0xff;
-        mapper[5] = 0xf4;
         Self {
             sram,
             vram,
             mapper,
-            mapper2,
             peripheral,
             rom_bank,
             input_queue: RefCell::new("x".to_string().into_bytes()),
@@ -316,37 +311,21 @@ pub enum MemoryTarget {
 }
 
 impl RAM {
-    fn sram_mapped(&self) -> u32 {
-        self.sram_mapped_value(self.mapper[3])
-    }
-
-    fn sram_mapped_value(&self, value: u8) -> u32 {
-        (value & 0x20 != 0) as u32
-    }
-
-    fn vram_page(&self) -> u32 {
-        self.sram_mapped_value(self.mapper[5])
-    }
-
-    fn vram_page_value(&self, value: u8) -> u32 {
-        (value & 0x08 != 0) as u32
-    }
-
     fn target_for_addr(&self, mut addr: u16) -> (MemoryTarget, u32) {
         if (0x7ff0..=0x7fff).contains(&addr) {
             (MemoryTarget::Mapper, (addr & 0x0f) as u32)
         } else if (0x7fe0..=0x7fef).contains(&addr) {
             (MemoryTarget::DUART, (addr & 0x0f) as u32)
-        } else if (0x7e00..=0x7eff).contains(&addr) && self.mapper[3] & 0x04 == 0 {
+        } else if (0x7e00..=0x7eff).contains(&addr) && self.mapper.get(3) & 0x04 == 0 {
             (MemoryTarget::Peripheral, (addr & 0x0ff) as u32)
         } else if addr < 0x8000 {
             let vram_offset = 0;
             if (0x200..0x600).contains(&addr) {
-                addr = swizzle_video_ram(addr, self.mapper[3]);
+                addr = swizzle_video_ram(addr, self.mapper.get(3));
             }
             (MemoryTarget::VRAM, vram_offset + addr as u32)
         } else {
-            if self.vram_page() == 1 {
+            if self.mapper.vram_page() == 1 {
                 // if self.sram_mapped() == 1 {
                 //     (MemoryTarget::VRAM, (addr - 0x8000) as u32)
                 // } else {
@@ -385,9 +364,9 @@ impl MemoryMapper for RAM {
                     if tracing::enabled!(tracing::Level::TRACE) {
                         trace!("VIDEO VRAM addr = {:02X?}", &self.vram[0..60]);
                     }
-                    calculate_mapper_7ff6(self.mapper[3], self.mapper[4], &self.vram)
+                    calculate_mapper_7ff6(self.mapper.get(3), self.mapper.get(4), &self.vram)
                 }
-                x => self.mapper[x as usize],
+                x => self.mapper.get(x as _),
             },
             MemoryTarget::DUART => {
                 trace!(
@@ -465,11 +444,15 @@ impl MemoryMapper for RAM {
             MemoryTarget::Mapper => {
                 info!(
                     "Mapper write: 0x{:04X} = 0x{:02X} -> 0x{:02X} @ {pc:05X}",
-                    addr, self.mapper[offset as usize], value
+                    addr,
+                    self.mapper.get(offset as _),
+                    value
                 );
-                if offset == 0x3 && self.sram_mapped() ^ self.sram_mapped_value(value) != 0 {
-                    let old = self.sram_mapped();
-                    let new = self.sram_mapped_value(value);
+                if offset == 0x3
+                    && self.mapper.sram_mapped() ^ self.mapper.sram_mapped_value(value) != 0
+                {
+                    let old = self.mapper.sram_mapped();
+                    let new = self.mapper.sram_mapped_value(value);
                     info!("VIDEO: VRAM page changed: {} -> {}", old, new);
                     if old == 1 && new == 0 {
                         let font = &self.vram[0..];
@@ -490,9 +473,7 @@ impl MemoryMapper for RAM {
                     self.sync.set_hz_70((value & 0x10) != 0);
                 }
 
-                // Save the old value for mapper2
-                self.mapper2[offset as usize] = self.mapper[offset as usize];
-                self.mapper[offset as usize] = value;
+                self.mapper.set(offset as _, value);
             }
             MemoryTarget::DUART => {
                 trace!(

@@ -127,11 +127,16 @@ Output:
   - `...x_x...` => x = VRAM page select?
   - `...._.x..` => x = ROM bank select (CONFIRMED via ROM disassembly)
   
- - 0x7ff6: 16-bit register, written twice, likely a chargen register
-    - 78: 48 lines (0111_1000)
-    - 9A: 36 lines (1001_1010)
-    - D0: 24 lines (1101_0000)
+ - 0x7ff6: 2x 8-bit register, written twice, once for top and once for bottom half of screen
+    - <a><b> - font height/row height (0 for 16px)
+    - 78: 50 lines (0111_1000)
+    - 9A: 38 lines (1001_1010)
+    - D0: 26 lines (1101_0000)
     - F0/FC: (set during vsync: 1111_????, F0 = 24 lines, FC = other)
+
+ - 0x7ff7/0x7ff8: screen offset (x/y), default 0x1e for each
+    - x: 0x0a -> 0x32 (20px)
+    - y: 0x01 -> 0x3b (60px)
 
 ## Video Timing
 
@@ -150,6 +155,7 @@ Output:
         - `_______.` => memory page for row data
         - `.......x` => 1 = force 132 columns
     - Byte 1:
+        - 0x02: split window divider
         - 0x04: double-width
         - 0x08: double-width, double-height top half
         - 0x0c: double-width, double-height bottom half
@@ -157,6 +163,7 @@ Output:
         - `.......x` => 1 = swap between screen 0 and screen 1 attributes
 
  - Char attributes:
+    
     0x02: bold
     0x04: reverse
     0x08: blink
