@@ -1,6 +1,7 @@
 # Blaze: an emulator for the VT420 terminal
 
-Blaze is an emulator for the VT420 terminal. It is a work in progress and is not yet complete.
+Blaze is an emulator for the VT420 terminal. It is a work in progress and is not
+yet complete.
 
 It is build on top of [the i8051 emulator crate](https://crates.io/crates/i8051).
 
@@ -9,7 +10,7 @@ emulated display and keyboard.
 
 ## Features
 
-- Emulates the VT420 terminal:
+Emulates the VT420 terminal:
   - LK201 keyboard
   - DC7166B/DC7166C video processor
   - 8051 CPU
@@ -22,6 +23,28 @@ emulated display and keyboard.
 cargo run --release -- --rom roms/vt420/23-068E9-00.bin --display
 ```
 
+Input is still a work in progress, but the following keys are supported:
+
+Supported input keys:
+ - Standard text-printing characters
+ - Special keys:
+   - F1-F5
+   - Up, Down, Left, Right
+   - Enter
+   - Escape
+
+Emulator control keys:
+ - Ctrl+C: Quit
+ - Ctrl+F (1,2,3,4,5): Send F1-F5 if your terminal doesn't support them
+ - Ctrl+D: Dump VRAM to /tmp/vram.bin
+ - Ctrl+H: Toggle hex display mode for VRAM
+ - Ctrl+Space: Toggle running/pausing
+
+`--show-vram` and `--show-mapper` can be used to display the first 256 bytes of
+the video RAM and mapper registers in real time while `--display` is enabled.
+
+`--trace` and `-v` will output trace messages to /tmp/blaze-vt.log.
+
 ## Screenshot
 
 ![Screenshot](docs/vt.gif)
@@ -30,7 +53,37 @@ cargo run --release -- --rom roms/vt420/23-068E9-00.bin --display
 
 Debugging is mutually exclusive with displaying the video RAM at this time.
 
+Breakpoints can be preset from the command-line as hex addresses or toggled
+during execution.
+
 ```
 # Set breakpoints at ABCD and 1ABCD
 cargo run --release -- --rom roms/vt420/23-068E9-00.bin --debug --trace -v --bp ABCD --bp 1ABCD
 ```
+
+Breakpoint addresses are not currently documented, but you may be able to find
+some interesting ones by looking in [`src/main.rs`](src/main.rs) at this time.
+
+Alternatively, you can run headlessly and use --trace which is useful in some
+cases:
+
+```
+# cargo run --release -- --rom roms/vt420/23-068E9-00.bin --trace -v
+VT420 Emulator starting...
+ROM file: "roms/vt420/23-068E9-00.bin"
+Initializing 8051 CPU emulator...
+Starting CPU execution...
+Loading ROM into memory...
+CPU initialized, PC = 0x0000
+[BP] Interrupt: CPU reset
+NVR: chip select rising edge
+NVR: clock tick, DI = 1
+Mapper write: 0x7FF0 = 0x00 -> 0x00 @ 00142
+Mapper write: 0x7FF1 = 0x00 -> 0x00 @ 00144
+Mapper write: 0x7FF2 = 0x00 -> 0x00 @ 00146
+...
+```
+
+## Disassembling the ROM
+
+There is a WIP VT420 disassembly in Ghidra, but this is not yet published.
