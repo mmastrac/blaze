@@ -1,14 +1,12 @@
 use std::{
-    array,
     collections::{BTreeMap, BTreeSet},
     fs,
     io::{self, Write},
-    ops::AddAssign,
     path::{Path, PathBuf},
 };
 
 use clap::Parser;
-use i8051::{ControlFlow, Cpu, MemoryMapper, Opcode, memory::ROM};
+use i8051::{ControlFlow, Cpu, CpuContext, Opcode, ReadOnlyMemoryMapper, memory::ROM};
 
 /// VT420 Terminal Emulator
 /// Emulates a VT420 terminal using an 8051 microcontroller
@@ -29,12 +27,44 @@ struct Args {
     debug: bool,
 }
 
+/// Simple context for disassembly that only provides ROM access
+struct DisassemblyContext {
+    rom: ROM,
+    ports: (),
+    xdata: (),
+}
+
+impl CpuContext for DisassemblyContext {
+    type Ports = ();
+    type Xdata = ();
+    type Code = ROM;
+
+    fn ports(&self) -> &Self::Ports {
+        &self.ports
+    }
+    fn xdata(&self) -> &Self::Xdata {
+        &self.xdata
+    }
+    fn code(&self) -> &Self::Code {
+        &self.rom
+    }
+    fn ports_mut(&mut self) -> &mut Self::Ports {
+        &mut self.ports
+    }
+    fn xdata_mut(&mut self) -> &mut Self::Xdata {
+        &mut self.xdata
+    }
+    fn code_mut(&mut self) -> &mut Self::Code {
+        &mut self.rom
+    }
+}
+
 pub fn main() {
     let args = Args::parse();
     let rom = fs::read(&args.rom).unwrap();
     fs::create_dir_all(&args.output).unwrap();
-    disassemble(&rom[0..0x10000], &args.output.join("bank0.asm"), args.debug);
-    // disassemble(&rom[0x10000..], &args.output.join("bank1.asm"));
+    disassemble(&rom[0..0x10000], &args.output.join("bank0.asm"), args.debug).unwrap();
+    // disassemble(&rom[0x10000..], &args.output.join("bank1.asm")).unwrap();
 }
 
 #[derive(Debug, Clone, Default)]
@@ -92,7 +122,11 @@ fn disassemble(rom: &[u8], output: &Path, debug: bool) -> io::Result<()> {
     }
 
     let cpu = Cpu::new();
-    let mut code = ROM::new(rom.to_vec());
+    let ctx = DisassemblyContext {
+        rom: ROM::new(rom.to_vec()),
+        ports: (),
+        xdata: (),
+    };
 
     loop {
         while let Some(root) = roots.first_mut() {
@@ -151,7 +185,7 @@ fn disassemble(rom: &[u8], output: &Path, debug: bool) -> io::Result<()> {
                 }
             }
 
-            let instruction = cpu.decode(&mut code, pc as _);
+            let instruction = cpu.decode(&ctx, pc as u32);
             if debug {
                 println!("{:#}", instruction);
             }
@@ -253,7 +287,7 @@ fn disassemble(rom: &[u8], output: &Path, debug: bool) -> io::Result<()> {
             match state {
                 AddressState::Unknown => {
                     if rom[i] != 0xff {
-                        let instruction = cpu.decode(&mut code, i as u16);
+                        let instruction = cpu.decode(&ctx, i as u32);
                         if let Some(addr) = instruction.addr() {
                             if matches!(address_state[addr as usize], AddressState::Unknown) {
                                 if addr > 0x100 && rom[addr as usize] != 0xff {
@@ -349,13 +383,13 @@ fn disassemble(rom: &[u8], output: &Path, debug: bool) -> io::Result<()> {
     loop {
         match address_state[pc as usize] {
             AddressState::Unknown | AddressState::Data => {
-                writeln!(file, "  DATA {:02X}", code.read(pc))?;
+                writeln!(file, "  DATA {:02X}", ctx.rom.read(&(&cpu, &ctx), pc as u32))?;
                 pc = pc.wrapping_add(1);
             }
             AddressState::InstructionStart {
                 jump_target, root, ..
             } => {
-                let instruction = cpu.decode(&mut code, pc as _);
+                let instruction = cpu.decode(&ctx, pc as u32);
                 if jump_target {
                     writeln!(file, "label_{pc:04X}:")?;
                 } else if root {

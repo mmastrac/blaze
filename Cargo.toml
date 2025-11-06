@@ -3,6 +3,10 @@ name = "blaze-vt"
 version = "0.1.0"
 edition = "2024"
 license = "AGPL-3.0"
+description = "A VT420 terminal emulator"
+authors = ["Matt Mastracci <matthew@mastracci.com>"]
+repository = "https://github.com/mmastrac/blaze-vt"
+readme = "README.md"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
