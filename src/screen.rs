@@ -38,7 +38,7 @@ impl<'a> Screen<'a> {
 impl<'a> Widget for Screen<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let vram = self.vram;
-        let vram_base = (vram[0x73] as usize) << 8;
+        let vram_base = 0;
 
         let mut line = [0_u16; 256];
         let mut attr = [0_u8; 256];
@@ -49,6 +49,9 @@ impl<'a> Widget for Screen<'a> {
 
         for row_idx in 0..rows as u16 {
             let row = ((vram[vram_base + row_idx as usize * 2] as u16) >> 1) << 8;
+            if row == 0 {
+                continue;
+            }
             // Bit 2: double width
             // Bit 1: swap between screen 0 and screen 1 attributes
             let row_attrs = vram[vram_base + row_idx as usize * 2 + 1];

@@ -1,7 +1,10 @@
-use std::cell::Cell;
 use std::sync::mpsc;
+use std::{cell::Cell, rc::Rc};
 
 use tracing::{trace, warn};
+
+/// Slow down ticks to allow XON/XOFF to take effect
+const DUART_COOLDOWN_TICKS: u16 = 100;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -135,20 +138,35 @@ const WRITE_2681: &[&str] = &[
 
 pub struct DUARTChannel {
     pub rx: mpsc::Receiver<u8>,
-    pub tx: mpsc::Sender<u8>,
+    pub tx: mpsc::SyncSender<u8>,
+    pub dtr: Rc<Cell<bool>>,
 }
 
 impl DUARTChannel {
     pub fn new() -> (DUARTChannel, DUARTChannel) {
-        let (tx, rx2) = mpsc::channel();
-        let (tx2, rx) = mpsc::channel();
-        (Self { rx, tx }, Self { rx: rx2, tx: tx2 })
+        let (tx, rx2) = mpsc::sync_channel(16);
+        let (tx2, rx) = mpsc::sync_channel(16);
+        let dtr = Rc::new(Cell::new(true));
+        (
+            Self {
+                rx,
+                tx,
+                dtr: dtr.clone(),
+            },
+            Self {
+                rx: rx2,
+                tx: tx2,
+                dtr,
+            },
+        )
     }
 }
 
 pub struct DUART {
     channel_a: DUARTChannel,
+    channel_a_cooldown: u16,
     channel_b: DUARTChannel,
+    channel_b_cooldown: u16,
     mode_register_a: (u8, u8),
     mr_a: Cell<bool>,
     mode_register_b: (u8, u8),
@@ -170,7 +188,9 @@ impl DUART {
         (
             Self {
                 channel_a,
+                channel_a_cooldown: 0,
                 channel_b,
+                channel_b_cooldown: 0,
                 mode_register_a: (0, 0),
                 mode_register_b: (0, 0),
                 mr_a: Cell::new(false),
@@ -337,10 +357,16 @@ impl DUART {
                 trace!("DUART pipe send (channel A) {tx:02X} {:?}", tx as char);
                 _ = self.channel_a.tx.send(tx);
             }
-            if self.channel_a_rx_pending.get().is_none() {
+            let dtr = self.channel_a.dtr.get();
+            self.channel_a_cooldown = self.channel_a_cooldown.saturating_sub(1);
+            if self.channel_a_rx_pending.get().is_none() && dtr && self.channel_a_cooldown == 0 {
                 if let Ok(tx) = self.channel_a.rx.try_recv() {
-                    trace!("DUART pipe receive (channel A) {tx:02X} {:?}", tx as char);
+                    trace!(
+                        "DUART pipe receive (channel A, dtr = {dtr}) {tx:02X} {:?}",
+                        tx as char
+                    );
                     self.channel_a_rx_pending.replace(Some(tx));
+                    self.channel_a_cooldown = DUART_COOLDOWN_TICKS;
                 }
             }
         }
@@ -357,10 +383,16 @@ impl DUART {
                 trace!("DUART pipe send (channel B) {tx:02X} {:?}", tx as char);
                 _ = self.channel_b.tx.send(tx);
             }
-            if self.channel_b_rx_pending.get().is_none() {
+            let dtr = self.channel_b.dtr.get();
+            self.channel_b_cooldown = self.channel_b_cooldown.saturating_sub(1);
+            if self.channel_b_rx_pending.get().is_none() && dtr && self.channel_b_cooldown == 0 {
                 if let Ok(tx) = self.channel_b.rx.try_recv() {
-                    trace!("DUART pipe receive (channel B) {tx:02X} {:?}", tx as char);
+                    trace!(
+                        "DUART pipe receive (channel B, dtr = {dtr}) {tx:02X} {:?}",
+                        tx as char
+                    );
                     self.channel_b_rx_pending.replace(Some(tx));
+                    self.channel_b_cooldown = DUART_COOLDOWN_TICKS;
                 }
             }
         }

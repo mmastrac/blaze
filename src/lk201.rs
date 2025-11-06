@@ -599,6 +599,12 @@ impl LK201Sender {
         _ = self.send.send(key as u8);
     }
 
+    pub fn send_ctrl_char(&self, c: char) {
+        _ = self.send.send(0xaf); // ctrl
+        _ = self.send_char(c);
+        _ = self.send.send(0xb3); // all up
+    }
+
     pub fn send_ctrl_special_key(&self, key: SpecialKey) {
         _ = self.send.send(0xaf); // ctrl
         _ = self.send.send(key as u8);

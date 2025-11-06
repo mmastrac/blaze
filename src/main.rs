@@ -7,9 +7,13 @@ use ratatui::crossterm::event::{Event, KeyCode, KeyModifiers};
 use ratatui::layout::Offset;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
+use std::cell::Cell;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, IsTerminal, Read, Write, stdout};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use std::{mem, thread};
 use tracing::{Level, error, info, trace, warn};
@@ -90,7 +94,11 @@ fn parse_hex_address(s: &str) -> Result<u32, Box<dyn std::error::Error + Send + 
     Ok(u32::from_str_radix(s, 16)?)
 }
 
-fn connect_duart_to_pipe(channel: DUARTChannel, comm: Vec<PathBuf>) -> Result<(), io::Error> {
+fn connect_duart_to_pipe(
+    channel: DUARTChannel,
+    comm: Vec<PathBuf>,
+) -> Result<Rc<Cell<bool>>, io::Error> {
+    let software_flow_control = Arc::new(AtomicBool::new(true));
     match comm.len() {
         0 => {
             // loopback
@@ -116,12 +124,21 @@ fn connect_duart_to_pipe(channel: DUARTChannel, comm: Vec<PathBuf>) -> Result<()
             let mut pipe_r = OpenOptions::new().read(true).write(true).open(&comm[0])?;
             let mut pipe_w = pipe_r.try_clone()?;
             eprintln!("Opened!");
+            let software_flow_control_clone = software_flow_control.clone();
             thread::spawn(move || {
                 loop {
                     match rx.recv() {
                         Ok(b) => {
-                            if !pipe_w.write_all(&[b]).is_ok() {
-                                break;
+                            if b == 0x11 {
+                                // XON
+                                software_flow_control_clone.store(true, Ordering::Relaxed);
+                            } else if b == 0x13 {
+                                // XOFF
+                                software_flow_control_clone.store(false, Ordering::Relaxed);
+                            } else {
+                                if !pipe_w.write_all(&[b]).is_ok() {
+                                    break;
+                                }
                             }
                         }
                         _ => break,
@@ -131,6 +148,10 @@ fn connect_duart_to_pipe(channel: DUARTChannel, comm: Vec<PathBuf>) -> Result<()
             });
             thread::spawn(move || {
                 loop {
+                    if !software_flow_control.load(Ordering::Relaxed) {
+                        std::thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
                     let mut buf = [0; 1];
                     match pipe_r.read(&mut buf) {
                         Ok(1) => {
@@ -149,6 +170,7 @@ fn connect_duart_to_pipe(channel: DUARTChannel, comm: Vec<PathBuf>) -> Result<()
             let tx = channel.tx;
             let pipe_r = comm[0].clone();
             let pipe_w = comm[1].clone();
+            let software_flow_control_clone = software_flow_control.clone();
             thread::spawn(move || {
                 let Ok(mut pipe_w) = OpenOptions::new().write(true).open(&pipe_w) else {
                     error!("Failed to open pipe_w: {:?}", pipe_w);
@@ -157,8 +179,16 @@ fn connect_duart_to_pipe(channel: DUARTChannel, comm: Vec<PathBuf>) -> Result<()
                 loop {
                     match rx.recv() {
                         Ok(b) => {
-                            if !pipe_w.write_all(&[b]).is_ok() {
-                                break;
+                            if b == 0x11 {
+                                // XON
+                                software_flow_control_clone.store(true, Ordering::Relaxed);
+                            } else if b == 0x13 {
+                                // XOFF
+                                software_flow_control_clone.store(false, Ordering::Relaxed);
+                            } else {
+                                if !pipe_w.write_all(&[b]).is_ok() {
+                                    break;
+                                }
                             }
                         }
                         _ => break,
@@ -172,6 +202,10 @@ fn connect_duart_to_pipe(channel: DUARTChannel, comm: Vec<PathBuf>) -> Result<()
                     return;
                 };
                 loop {
+                    if !software_flow_control.load(Ordering::Relaxed) {
+                        std::thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
                     let mut buf = [0; 1];
                     match pipe_r.read(&mut buf) {
                         Ok(1) => {
@@ -188,7 +222,7 @@ fn connect_duart_to_pipe(channel: DUARTChannel, comm: Vec<PathBuf>) -> Result<()
         _ => unreachable!(),
     }
 
-    Ok(())
+    Ok(channel.dtr)
 }
 
 struct System {
@@ -203,6 +237,8 @@ struct System {
     diagnostic_monitor: DiagnosticMonitor,
     timer: Timer,
     default: DefaultPortMapper,
+    dtr_a: Rc<Cell<bool>>,
+    dtr_b: Rc<Cell<bool>>,
 
     keyboard: LK201,
     breakpoints: Breakpoints,
@@ -222,8 +258,8 @@ impl System {
         let (serial, in_kbd, out_kbd) = Serial::new(60);
         let (duart, channel_a, channel_b) = DUART::new();
 
-        connect_duart_to_pipe(channel_a, comm1)?;
-        connect_duart_to_pipe(channel_b, comm2)?;
+        let dtr_a = connect_duart_to_pipe(channel_a, comm1)?;
+        let dtr_b = connect_duart_to_pipe(channel_b, comm2)?;
 
         let mut memory = RAM::new(bank.bank.clone(), video_row.sync.clone(), duart);
         let mut nvr_file = None;
@@ -266,6 +302,8 @@ impl System {
             nvr_write: 0,
             video_row,
             serial,
+            dtr_a,
+            dtr_b,
             diagnostic_monitor: DiagnosticMonitor::default(),
             timer: Timer::default(),
             default: DefaultPortMapper::default(),
@@ -303,6 +341,14 @@ impl System {
             }
         } else if prev_p3 & P3_INT1 != 0 {
             trace!("DUART interrupt");
+        }
+        let dtr_a = self.memory.duart.output_bits_inv & (1 << 1) != 0;
+        let dtr_b = self.memory.duart.output_bits_inv & (1 << 3) != 0;
+        if self.dtr_a.replace(dtr_a) != dtr_a {
+            trace!("DUART pipe A DTR changed to {}", self.dtr_a.get());
+        }
+        if self.dtr_b.replace(dtr_b) != dtr_b {
+            trace!("DUART pipe B DTR changed to {}", self.dtr_b.get());
         }
         self.video_row.tick();
         let tick = self.timer.prepare_tick(cpu, self);
@@ -848,13 +894,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     KeyCode::Char('c') => {
                                         _ = sender.send_special_key(SpecialKey::Lock);
                                     }
+                                    KeyCode::Char('q') => {
+                                        crossterm::terminal::disable_raw_mode()?;
+                                        crossterm::execute!(
+                                            io::stdout(),
+                                            crossterm::terminal::LeaveAlternateScreen,
+                                        )?;
+                                        break;
+                                    }
                                     _ => {}
                                 }
                             }
                         }
                         if key.modifiers == KeyModifiers::CONTROL {
                             match key.code {
-                                KeyCode::Char('c') => {
+                                KeyCode::Char('q') => {
                                     crossterm::terminal::disable_raw_mode()?;
                                     crossterm::execute!(
                                         io::stdout(),
@@ -877,6 +931,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                                 KeyCode::Char('d') => {
                                     fs::write("/tmp/vram.bin", &system.memory.vram[0..])?;
+                                }
+                                KeyCode::Char(c) => {
+                                    _ = sender.send_ctrl_char(c);
                                 }
                                 KeyCode::F(1) => {
                                     _ = sender.send_ctrl_special_key(SpecialKey::F1);
