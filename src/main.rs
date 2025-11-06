@@ -8,21 +8,20 @@ use ratatui::layout::Offset;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use std::cell::Cell;
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, IsTerminal, Read, Write, stdout};
+use std::fs::{self, File};
+use std::io::{self, IsTerminal, stdout};
+use std::mem;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
-use std::{mem, thread};
-use tracing::{Level, error, info, trace, warn};
+use tracing::{Level, info, trace, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm;
 
+mod comm;
 mod duart;
 mod lk201;
 mod memory;
@@ -32,9 +31,10 @@ mod video;
 
 use memory::{Bank, RAM, ROM, VideoProcessor};
 
-use i8051::{Cpu, CpuContext, CpuView, DefaultPortMapper, PortMapper, Register};
+use i8051::{Cpu, CpuContext, CpuView, DefaultPortMapper, PortMapper};
 
-use crate::duart::{DUART, DUARTChannel};
+use crate::comm::CommConfig;
+use crate::duart::DUART;
 use crate::lk201::{LK201, SpecialKey};
 use crate::memory::DiagnosticMonitor;
 use crate::screen::{DisplayMode, Screen};
@@ -57,13 +57,29 @@ struct Args {
     #[arg(long)]
     display: bool,
 
-    /// List of Comm1 read/write pipe pairs: specify as `--comm1 rx_path tx_path`; can be repeated up to 2 times.
-    #[arg(long = "comm1", num_args=0..=2, value_names=["RX", "TX"])]
-    comm1: Vec<PathBuf>,
+    /// Comm1: Single bidirectional pipe
+    #[arg(long = "comm1-pipe", value_name = "PIPE")]
+    comm1_pipe: Option<PathBuf>,
 
-    /// List of Comm2 read/write pipe pairs: specify as `--comm2 rx_path tx_path`; can be repeated up to 2 times.
-    #[arg(long = "comm2", num_args=0..=2, value_names=["RX", "TX"])]
-    comm2: Vec<PathBuf>,
+    /// Comm1: Separate read and write pipes
+    #[arg(long = "comm1-pipes", num_args = 2, value_names = ["RX", "TX"])]
+    comm1_pipes: Vec<PathBuf>,
+
+    /// Comm1: Execute a command and connect to its pty
+    #[arg(long = "comm1-exec", value_name = "COMMAND")]
+    comm1_exec: Option<String>,
+
+    /// Comm2: Single bidirectional pipe
+    #[arg(long = "comm2-pipe", value_name = "PIPE")]
+    comm2_pipe: Option<PathBuf>,
+
+    /// Comm2: Separate read and write pipes
+    #[arg(long = "comm2-pipes", num_args = 2, value_names = ["RX", "TX"])]
+    comm2_pipes: Vec<PathBuf>,
+
+    /// Comm2: Execute a command and connect to its pty
+    #[arg(long = "comm2-exec", value_name = "COMMAND")]
+    comm2_exec: Option<String>,
 
     /// Display the video RAM
     #[arg(long, requires = "display")]
@@ -94,137 +110,6 @@ fn parse_hex_address(s: &str) -> Result<u32, Box<dyn std::error::Error + Send + 
     Ok(u32::from_str_radix(s, 16)?)
 }
 
-fn connect_duart_to_pipe(
-    channel: DUARTChannel,
-    comm: Vec<PathBuf>,
-) -> Result<Rc<Cell<bool>>, io::Error> {
-    let software_flow_control = Arc::new(AtomicBool::new(true));
-    match comm.len() {
-        0 => {
-            // loopback
-            thread::spawn(move || {
-                loop {
-                    match channel.rx.recv() {
-                        Ok(b) => {
-                            trace!("DUART pipe loopback char {b:02X} {:?}", b as char);
-                            if !channel.tx.send(b).is_ok() {
-                                break;
-                            }
-                        }
-                        _ => break,
-                    }
-                }
-                trace!("DUART pipe loopback thread exited");
-            });
-        }
-        1 => {
-            let rx = channel.rx;
-            let tx = channel.tx;
-            eprintln!("Opening {:?} as read/write", comm[0]);
-            let mut pipe_r = OpenOptions::new().read(true).write(true).open(&comm[0])?;
-            let mut pipe_w = pipe_r.try_clone()?;
-            eprintln!("Opened!");
-            let software_flow_control_clone = software_flow_control.clone();
-            thread::spawn(move || {
-                loop {
-                    match rx.recv() {
-                        Ok(b) => {
-                            if b == 0x11 {
-                                // XON
-                                software_flow_control_clone.store(true, Ordering::Relaxed);
-                            } else if b == 0x13 {
-                                // XOFF
-                                software_flow_control_clone.store(false, Ordering::Relaxed);
-                            } else {
-                                if !pipe_w.write_all(&[b]).is_ok() {
-                                    break;
-                                }
-                            }
-                        }
-                        _ => break,
-                    }
-                }
-                trace!("DUART pipe write thread exited");
-            });
-            thread::spawn(move || {
-                loop {
-                    if !software_flow_control.load(Ordering::Relaxed) {
-                        std::thread::sleep(Duration::from_millis(10));
-                        continue;
-                    }
-                    let mut buf = [0; 1];
-                    match pipe_r.read(&mut buf) {
-                        Ok(1) => {
-                            if !tx.send(buf[0]).is_ok() {
-                                break;
-                            }
-                        }
-                        _ => break,
-                    }
-                }
-                trace!("DUART pipe read thread exited");
-            });
-        }
-        2 => {
-            let rx = channel.rx;
-            let tx = channel.tx;
-            let pipe_r = comm[0].clone();
-            let pipe_w = comm[1].clone();
-            let software_flow_control_clone = software_flow_control.clone();
-            thread::spawn(move || {
-                let Ok(mut pipe_w) = OpenOptions::new().write(true).open(&pipe_w) else {
-                    error!("Failed to open pipe_w: {:?}", pipe_w);
-                    return;
-                };
-                loop {
-                    match rx.recv() {
-                        Ok(b) => {
-                            if b == 0x11 {
-                                // XON
-                                software_flow_control_clone.store(true, Ordering::Relaxed);
-                            } else if b == 0x13 {
-                                // XOFF
-                                software_flow_control_clone.store(false, Ordering::Relaxed);
-                            } else {
-                                if !pipe_w.write_all(&[b]).is_ok() {
-                                    break;
-                                }
-                            }
-                        }
-                        _ => break,
-                    }
-                }
-                trace!("DUART pipe write thread exited");
-            });
-            thread::spawn(move || {
-                let Ok(mut pipe_r) = OpenOptions::new().read(true).open(&pipe_r) else {
-                    error!("Failed to open pipe_r: {:?}", pipe_r);
-                    return;
-                };
-                loop {
-                    if !software_flow_control.load(Ordering::Relaxed) {
-                        std::thread::sleep(Duration::from_millis(10));
-                        continue;
-                    }
-                    let mut buf = [0; 1];
-                    match pipe_r.read(&mut buf) {
-                        Ok(1) => {
-                            if !tx.send(buf[0]).is_ok() {
-                                break;
-                            }
-                        }
-                        _ => break,
-                    }
-                }
-                trace!("DUART pipe read thread exited");
-            });
-        }
-        _ => unreachable!(),
-    }
-
-    Ok(channel.dtr)
-}
-
 struct System {
     rom: ROM,
     memory: RAM,
@@ -248,8 +133,8 @@ impl System {
     fn new(
         rom: &Path,
         nvr: Option<&Path>,
-        comm1: Vec<PathBuf>,
-        comm2: Vec<PathBuf>,
+        comm1: CommConfig,
+        comm2: CommConfig,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let bank = Bank::default();
         info!("Loading ROM into memory...");
@@ -258,8 +143,8 @@ impl System {
         let (serial, in_kbd, out_kbd) = Serial::new(60);
         let (duart, channel_a, channel_b) = DUART::new();
 
-        let dtr_a = connect_duart_to_pipe(channel_a, comm1)?;
-        let dtr_b = connect_duart_to_pipe(channel_b, comm2)?;
+        let dtr_a = crate::comm::connect_duart(channel_a, comm1)?;
+        let dtr_b = crate::comm::connect_duart(channel_b, comm2)?;
 
         let mut memory = RAM::new(bank.bank.clone(), video_row.sync.clone(), duart);
         let mut nvr_file = None;
@@ -520,7 +405,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start_time = Instant::now();
     let mut instruction_count = 0;
 
-    let mut system = System::new(&args.rom, args.nvr.as_deref(), args.comm1, args.comm2).unwrap();
+    // Parse comm1 configuration
+    let comm1_pipes = if args.comm1_pipes.len() == 2 {
+        Some((args.comm1_pipes[0].clone(), args.comm1_pipes[1].clone()))
+    } else {
+        None
+    };
+    let comm1_config = CommConfig::from_args(args.comm1_pipe, comm1_pipes, args.comm1_exec);
+
+    // Parse comm2 configuration
+    let comm2_pipes = if args.comm2_pipes.len() == 2 {
+        Some((args.comm2_pipes[0].clone(), args.comm2_pipes[1].clone()))
+    } else {
+        None
+    };
+    let comm2_config = CommConfig::from_args(args.comm2_pipe, comm2_pipes, args.comm2_exec);
+
+    let mut system =
+        System::new(&args.rom, args.nvr.as_deref(), comm1_config, comm2_config).unwrap();
 
     // Enable tracing if requested
     // if args.trace && args.verbose {

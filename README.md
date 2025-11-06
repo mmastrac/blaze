@@ -20,7 +20,11 @@ Emulates the VT420 terminal:
 ## Quick Start
 
 ```
+# Run the emulator with a display and comm1/2 in loopback mode
 cargo run --release -- --rom roms/vt420/23-068E9-00.bin --display
+
+# Run the emulator with a display and comm1 connected to "/bin/sh"
+cargo run --release -- --rom roms/vt420/23-068E9-00.bin --display --comm1-exec "/bin/sh"
 ```
 
 Input is still a work in progress, but the following keys are supported:
@@ -34,7 +38,7 @@ Supported input keys:
    - Escape
 
 Emulator control keys:
- - Ctrl+C: Quit
+ - Ctrl+Q: Quit (or Ctrl+F, then Q)
  - Ctrl+F (1,2,3,4,5): Send F1-F5 if your terminal doesn't support them
  - Ctrl+D: Dump VRAM to /tmp/vram.bin
  - Ctrl+H: Toggle hex display mode for VRAM
