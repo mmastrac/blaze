@@ -203,6 +203,150 @@ impl Mapper {
     }
 }
 
+/// Decode the VRAM into a grid of characters and attributes.
+/// The row_callback is called for each row, with the row index and the row attributes.
+/// The column_callback is called for each column, with the column, display character and its attributes.
+#[inline(always)]
+pub fn decode_vram<T>(
+    vram: &[u8],
+    mapper: &Mapper,
+    mut row_callback: impl FnMut(&mut T, u8, u8),
+    mut column_callback: impl FnMut(&mut T, u8, char, u16),
+    mut data: T,
+) -> T {
+    let vram_base = 0;
+
+    let Some(rows) = mapper.row_count(vram) else {
+        return data;
+    };
+
+    let mut line = [0_u16; 256];
+    let mut attr = [0_u8; 256];
+
+    for row_idx in 0..rows as u16 {
+        let row_header_offset = vram_base + row_idx as usize * 2;
+        let row_pointer = ((vram[row_header_offset] as u16) >> 1) << 8;
+        if row_pointer == 0 {
+            continue;
+        }
+
+        let row_attrs = vram[row_header_offset + 1];
+        let is_double_width = row_attrs & (1 << 2) != 0;
+        let row_is_132 = vram[row_header_offset] & 1 != 0;
+
+        row_callback(&mut data, row_idx as u8, row_attrs);
+
+        line.fill(0);
+        attr.fill(0);
+
+        // Decode 12-bit character codes from packed 3-byte sequences
+        let mut b = 0_u16;
+        let mut j = 0_usize;
+        let row_addr = row_pointer as usize;
+
+        // First segment: 72 chars, bytes 0-107
+        for i in 0..108 {
+            let char_byte = vram[row_addr + i];
+            match i % 3 {
+                0 => b = char_byte as u16,
+                1 => {
+                    b |= ((char_byte & 0xf) as u16) << 8;
+                    line[j] = b;
+                    j += 1;
+                    b = ((char_byte & 0xf0) as u16) >> 4;
+                }
+                _ => {
+                    b |= (char_byte as u16) << 4;
+                    line[j] = b;
+                    j += 1;
+                }
+            }
+        }
+
+        // Second segment: bytes 128-220
+        for i in 128..221 {
+            let char_byte = vram[row_addr + i];
+            let i = i + 1;
+            match i % 3 {
+                0 => b = char_byte as u16,
+                1 => {
+                    b |= ((char_byte & 0xf) as u16) << 8;
+                    line[j] = b;
+                    j += 1;
+                    b = ((char_byte & 0xf0) as u16) >> 4;
+                }
+                _ => {
+                    b |= (char_byte as u16) << 4;
+                    line[j] = b;
+                    j += 1;
+                }
+            }
+        }
+
+        // Extract attributes
+        for i in 1..133 {
+            let bit = ((i % 4) * 2) as u8;
+            attr[i - 1] = (vram[row_addr + 0xdd + (i / 4)] >> bit) & 0x3;
+            let cell_attr = ((line[i - 1] & 0xf00) >> 8) as u8;
+            attr[i - 1] |= cell_attr << 2;
+        }
+
+        let max_columns = if row_is_132 { 132 } else { 80 };
+        let decoded_columns = max_columns.min(j);
+
+        for col in 0..decoded_columns {
+            let value = line[col];
+            let char_code = (value & 0xff) as u8;
+            let ch = if value & 0x100 != 0 {
+                match char_code {
+                    0x9c => 'S',
+                    0x0d => 'H',
+                    0x54 => 'e',
+                    0x09 => 's',
+                    0x52 => 'd',
+                    0x55 => 'i',
+                    0x6d => 'l',
+                    0x7f => 'o',
+                    0x75 => 'n',
+                    0x20 => '1',
+                    0x38 => '2',
+                    _ => '.',
+                }
+            } else if char_code == 0 || char_code == 0x98 {
+                ' '
+            } else if char_code < 0x20 || char_code > 0x7e {
+                match char_code {
+                    0x0d => '╭',
+                    0x0c => '╮',
+                    0x0e => '╰',
+                    0x0b => '╯',
+                    0x12 => '─',
+                    0x19 => '│',
+                    0xa9 => '©',
+                    _ => '.',
+                }
+            } else {
+                char::from(char_code)
+            };
+
+            let mut combined_attr = (value & 0xf00) as u16 | attr[col] as u16;
+            if is_double_width {
+                combined_attr |= 1 << 12;
+            }
+            if row_is_132 {
+                combined_attr |= 1 << 13;
+            }
+
+            if char_code == 0 && (attr[col] >> 2) == 0xe {
+                column_callback(&mut data, col as u8, ' ', combined_attr);
+            } else {
+                column_callback(&mut data, col as u8, ch, combined_attr);
+            }
+        }
+    }
+    data
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

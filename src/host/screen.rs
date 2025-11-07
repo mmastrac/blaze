@@ -63,7 +63,7 @@ impl<'a> Widget for Screen<'a> {
             let mut b = 0;
             let mut j = 0;
 
-            // First segment: bytes 0-107
+            // First segment: 72 chars, bytes 0-107
             for i in 0..108 {
                 let char = vram[row as usize + i];
                 match i % 3 {

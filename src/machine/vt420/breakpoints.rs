@@ -1,5 +1,7 @@
 use i8051::breakpoint::{Action, Breakpoints};
 
+use crate::machine::vt420::memory::ROM;
+
 pub(crate) const BREAKPOINTS: &[(u32, &str)] = &[
     (0x0, "Interrupt: CPU reset"),
     (0x10000, "Interrupt: CPU reset"),
@@ -60,8 +62,31 @@ pub(crate) const BREAKPOINTS: &[(u32, &str)] = &[
     (0x05A59, "NVR fail 4"),
 ];
 
-pub(crate) fn create_breakpoints(breakpoints: &mut Breakpoints) {
+pub(crate) fn create_breakpoints(breakpoints: &mut Breakpoints, code: &ROM) {
     for &(addr, message) in BREAKPOINTS {
         breakpoints.add(true, addr, Action::Log(message.to_string()));
+    }
+
+    for addr in code.find_bank_dispatch() {
+        breakpoints.add(
+            true,
+            addr.dispatch_addr,
+            Action::Log(format!(
+                "Calling bank {}/{:X}h @ {:X}h",
+                addr.target_addr >> 16,
+                addr.id,
+                addr.target_addr
+            )),
+        );
+        breakpoints.add(
+            true,
+            addr.target_addr,
+            Action::Log(format!(
+                "Entered bank {}/{:X}h @ {:X}h",
+                addr.target_addr >> 16,
+                addr.id,
+                addr.target_addr
+            )),
+        );
     }
 }

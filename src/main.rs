@@ -1,5 +1,4 @@
 use clap::Parser;
-use i8051::breakpoint::Action;
 use i8051::sfr::{SFR_P1, SFR_P2, SFR_P3};
 use ratatui::crossterm::event::{Event, KeyCode, KeyModifiers};
 use ratatui::layout::Offset;
@@ -170,39 +169,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut system =
         System::new(&args.rom, args.nvr.as_deref(), comm1_config, comm2_config).unwrap();
 
-    // Enable tracing if requested
-    // if args.trace && args.verbose {
-    //     info!("Instruction tracing enabled");
-    //     breakpoints.add(true, 0, Action::SetTraceInstructions(true));
-    //     breakpoints.add(true, 0x10000, Action::SetTraceInstructions(true));
-    // }
-
     let breakpoints = &mut system.breakpoints;
-    let code = &system.rom;
-    for addr in code.find_bank_dispatch() {
-        breakpoints.add(
-            true,
-            addr.dispatch_addr,
-            Action::Log(format!(
-                "Calling bank {}/{:X}h @ {:X}h",
-                addr.target_addr >> 16,
-                addr.id,
-                addr.target_addr
-            )),
-        );
-        breakpoints.add(
-            true,
-            addr.target_addr,
-            Action::Log(format!(
-                "Entered bank {}/{:X}h @ {:X}h",
-                addr.target_addr >> 16,
-                addr.id,
-                addr.target_addr
-            )),
-        );
-    }
-
-    create_breakpoints(breakpoints);
+    create_breakpoints(breakpoints, &system.rom);
 
     info!("CPU initialized, PC = 0x{:04X}", cpu.pc_ext(&system));
 

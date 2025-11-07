@@ -13,9 +13,10 @@ use tracing::{error, trace};
 use crate::machine::generic::duart::DUARTChannel;
 
 /// Communication configuration for a DUART channel
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum CommConfig {
     /// Loopback mode (no external connection)
+    #[default]
     Loopback,
     /// Single bidirectional pipe
     Pipe(PathBuf),

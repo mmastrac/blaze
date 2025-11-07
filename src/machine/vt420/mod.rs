@@ -18,6 +18,7 @@ use tracing::{info, trace, warn};
 use crate::host::comm::{self, CommConfig};
 use crate::machine::generic::duart::DUART;
 use crate::machine::generic::lk201::LK201;
+use crate::machine::vt420::video::decode_vram;
 
 use self::memory::{Bank, DiagnosticMonitor, RAM, ROM, VideoProcessor};
 
@@ -181,6 +182,21 @@ impl System {
             warn!("Step took too long: {:?}", start.elapsed());
         }
     }
+
+    pub(crate) fn dump_screen_text(&self) -> String {
+        let text = String::with_capacity(132 * 25);
+        decode_vram(
+            &self.memory.vram,
+            &self.memory.mapper,
+            |text, _, _| {
+                text.push_str("\n");
+            },
+            |text, _col, ch, _attrs| {
+                text.push(ch);
+            },
+            text,
+        )
+    }
 }
 
 impl PortMapper for System {
@@ -277,5 +293,29 @@ impl CpuContext for System {
     }
     fn code_mut(&mut self) -> &mut Self::Code {
         &mut self.rom
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_boots() {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let mut system = System::new(
+            &Path::new(&format!("{}/roms/vt420/23-068E9-00.bin", manifest_dir)),
+            None,
+            CommConfig::default(),
+            CommConfig::default(),
+        )
+        .unwrap();
+        let mut cpu = Cpu::new();
+        for _ in 0..9850880 {
+            system.step(&mut cpu);
+        }
+
+        let screen = system.dump_screen_text();
+        assert!(screen.contains("VT420 OK"), "{screen}");
     }
 }
