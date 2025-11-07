@@ -5,7 +5,7 @@ use ratatui::{
     widgets::Widget,
 };
 
-use crate::video::Mapper;
+use crate::machine::vt420::video::Mapper;
 
 pub struct Screen<'a> {
     vram: &'a [u8],

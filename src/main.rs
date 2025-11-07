@@ -22,24 +22,17 @@ use tracing_subscriber::util::SubscriberInitExt;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm;
 
-mod comm;
-mod duart;
-mod lk201;
-mod memory;
-mod nvr;
-mod screen;
-mod ssu;
-mod video;
+mod host;
+mod machine;
 
-use memory::{Bank, RAM, ROM, VideoProcessor};
+use machine::vt420::memory::{Bank, DiagnosticMonitor, RAM, ROM, VideoProcessor};
 
 use i8051::{Cpu, CpuContext, CpuView, DefaultPortMapper, PortMapper};
 
-use crate::comm::CommConfig;
-use crate::duart::DUART;
-use crate::lk201::{LK201, SpecialKey};
-use crate::memory::DiagnosticMonitor;
-use crate::screen::{DisplayMode, Screen};
+use crate::host::comm::CommConfig;
+use crate::machine::generic::duart::DUART;
+use crate::machine::generic::lk201::{LK201, SpecialKey};
+use crate::host::screen::{DisplayMode, Screen};
 
 /// VT420 Terminal Emulator
 /// Emulates a VT420 terminal using an 8051 microcontroller
@@ -150,8 +143,8 @@ impl System {
         let (serial, in_kbd, out_kbd) = Serial::new(60);
         let (duart, channel_a, channel_b) = DUART::new();
 
-        let dtr_a = crate::comm::connect_duart(channel_a, comm1)?;
-        let dtr_b = crate::comm::connect_duart(channel_b, comm2)?;
+        let dtr_a = crate::host::comm::connect_duart(channel_a, comm1)?;
+        let dtr_b = crate::host::comm::connect_duart(channel_b, comm2)?;
 
         let mut memory = RAM::new(bank.bank.clone(), video_row.sync.clone(), duart);
         let mut nvr_file = None;

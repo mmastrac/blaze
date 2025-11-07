@@ -1,17 +1,16 @@
 use std::cell::Cell;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
-use std::mem::MaybeUninit;
-use std::os::fd::{AsFd, AsRawFd, OwnedFd};
+use std::os::fd::OwnedFd;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use tracing::{error, trace};
 
-use crate::duart::DUARTChannel;
+use crate::machine::generic::duart::DUARTChannel;
 
 /// Communication configuration for a DUART channel
 #[derive(Debug, Clone)]
