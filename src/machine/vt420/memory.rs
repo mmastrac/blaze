@@ -14,7 +14,8 @@ use tracing::{info, trace};
 
 use crate::machine::generic::duart::{DUART, ReadRegister, WriteRegister};
 use crate::machine::generic::nvr::Nvr;
-use crate::machine::vt420::video::{Mapper, SyncGen, TIMING_60HZ, TIMING_70HZ};
+use crate::machine::generic::vsync::SyncGen;
+use crate::machine::vt420::video::{Mapper, TIMING_60HZ, TIMING_70HZ};
 
 pub struct Bank {
     pub bank: Rc<Cell<bool>>,

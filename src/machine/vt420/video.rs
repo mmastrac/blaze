@@ -3,6 +3,8 @@
 //! sync signal passes correctly, and the self-test for number of csync pulses
 //! per frame returns both the correct timing and correct number of pulses.
 
+use crate::machine::generic::vsync::Timing;
+
 /// The number of vertical lines expected by the ROM
 pub const VERTICAL_LINES: usize = 417;
 
@@ -27,85 +29,6 @@ pub const TIMING_70HZ: Timing = Timing {
     v_sync: 16,
     v_bp: 100, // Vtot = 536
 };
-
-#[derive(Clone, Copy, Debug)]
-pub struct Timing {
-    pub h_active: u16,
-    pub h_fp: u16,
-    pub h_sync: u16,
-    pub h_bp: u16, // h_active + h_fp + h_sync + h_bp = Htot
-
-    pub v_active: u16,
-    pub v_fp: u16,
-    pub v_sync: u16, // lines of vertical sync (serrated)
-    pub v_bp: u16,   // v_active + v_fp + v_sync + v_bp = Vtot
-}
-
-impl Timing {
-    pub fn htot(&self) -> u16 {
-        self.h_active + self.h_fp + self.h_sync + self.h_bp
-    }
-    pub fn vtot(&self) -> u16 {
-        self.v_active + self.v_fp + self.v_sync + self.v_bp
-    }
-    #[cfg(test)]
-    pub fn pixel_tot(&self) -> u16 {
-        self.htot() * self.vtot()
-    }
-}
-
-#[derive(Debug)]
-pub struct SyncGen {
-    pub t: Timing,
-    pub x: u16, // 0..Htot-1
-    pub y: u16, // 0..Vtot-1
-}
-
-impl SyncGen {
-    pub fn new(t: Timing) -> Self {
-        Self { t, x: 0, y: 0 }
-    }
-
-    /// Advance by one pixel clock. Returns true if CSYNC is set. CSYNC is
-    /// active (low) when in HSYNC or VSYNC. This function returns the inverse
-    /// of the pin signal.
-    pub fn tick(&mut self) -> bool {
-        // Compute “in hsync” window for the current line
-        let hsync_start = 0;
-        let hsync_end = hsync_start + self.t.h_sync;
-        let in_hsync = self.x >= hsync_start && self.x < hsync_end;
-
-        // Compute vertical region
-        let v_sync_start = 0;
-        let v_sync_end = v_sync_start + self.t.v_sync;
-        let in_vsync = self.y >= v_sync_start && self.y < v_sync_end;
-
-        // Serration: during vsync, keep producing hsync-rate pulses.
-        // CSYNC is active (low) whenever we are in HSYNC OR VSYNC.
-        // During VSYNC we *also* go high during the HSYNC window (“serration”).
-        let csync = if in_vsync {
-            // high during the hsync portion (serrations)
-            !in_hsync || (self.y == v_sync_end - 1 && self.x == 2)
-        } else {
-            // normal: low during the hsync portion
-            in_hsync
-        };
-
-        // trace!("HSYNC: {} VSYNC: {} CSYNC: {}", in_hsync, in_vsync, csync);
-
-        // Advance raster
-        self.x += 1;
-        if self.x == self.t.htot() {
-            self.x = 0;
-            self.y += 1;
-            if self.y == self.t.vtot() {
-                self.y = 0;
-            }
-        }
-
-        csync
-    }
-}
 
 pub struct Mapper {
     pub mapper: [u8; 16],
@@ -350,6 +273,7 @@ pub fn decode_vram<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::machine::generic::vsync::SyncGen;
 
     #[test]
     fn test_sync_gen_60hz() {
@@ -403,7 +327,9 @@ mod tests {
         assert_eq!(TIMING_70HZ.vtot(), 536);
     }
 
-    /// Syncable means that we capture pulses of 15 off, then 15 on at some point.
+    /// Syncable means that we capture pulses of 15 off, then 15 on at some
+    /// point. If this test passes, we should successfully boot the system past
+    /// diagnostics.
     #[test]
     fn test_syncable() {
         for timing in [TIMING_60HZ, TIMING_70HZ] {
