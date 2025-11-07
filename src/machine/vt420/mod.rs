@@ -298,8 +298,11 @@ impl CpuContext for System {
 
 #[cfg(test)]
 mod tests {
+    use crate::machine::generic::lk201::SpecialKey;
     use super::*;
 
+    /// Run the ROM and simulation and ensure that we boot to the passed-test screen
+    /// and setup comes up.
     #[test]
     fn test_boots() {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
@@ -317,5 +320,14 @@ mod tests {
 
         let screen = system.dump_screen_text();
         assert!(screen.contains("VT420 OK"), "{screen}");
+
+        system.keyboard.sender().send_special_key(SpecialKey::F3);
+
+        for _ in 0..1000000 {
+            system.step(&mut cpu);
+        }
+
+        let screen = system.dump_screen_text();
+        assert!(screen.contains("Set-Up=English"), "{screen}");
     }
 }
