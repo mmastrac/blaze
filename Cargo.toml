@@ -22,9 +22,14 @@ tracing-subscriber = "0.3.20"
 ratatui = "0.29.0"
 hex-literal = "1.1"
 pty-process = "0.5"
+bit-set = "0.8"
+libc = "0.2.177"
 
 [dev-dependencies]
 tempfile = "3.23"
+
+[features]
+pc-trace = []
 
 [[example]]
 name = "disassemble-rom"

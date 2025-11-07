@@ -383,7 +383,11 @@ fn disassemble(rom: &[u8], output: &Path, debug: bool) -> io::Result<()> {
     loop {
         match address_state[pc as usize] {
             AddressState::Unknown | AddressState::Data => {
-                writeln!(file, "  DATA {:02X}", ctx.rom.read(&(&cpu, &ctx), pc as u32))?;
+                writeln!(
+                    file,
+                    "  DATA {:02X}",
+                    ctx.rom.read(&(&cpu, &ctx), pc as u32)
+                )?;
                 pc = pc.wrapping_add(1);
             }
             AddressState::InstructionStart {

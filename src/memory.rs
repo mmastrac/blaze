@@ -6,6 +6,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 use hex_literal::hex;
+use i8051::sfr::SFR_P1;
 use i8051::sfr::SFR_P2;
 use i8051::sfr::SFR_P3;
 use i8051::{CpuView, MemoryMapper, PortMapper, ReadOnlyMemoryMapper};
@@ -76,6 +77,8 @@ impl Default for SyncHolder {
 }
 
 pub struct VideoProcessor {
+    pub p1: u8,
+    pub p1_read: u8,
     pub p2: u8,
     pub p3: u8,
     pub p3_read: u8,
@@ -85,6 +88,10 @@ pub struct VideoProcessor {
 impl VideoProcessor {
     pub fn new() -> Self {
         Self {
+            p1: 0b1111_1111,
+            // Bit 0-3: 0 for rotation disable, 1 for rotation enable
+            // Bit 6: 1 for enable 232/423 select (ie: mux to 423)
+            p1_read: 0b1111_1111,
             p2: 0xff,
             p3: 0xff,
             p3_read: 0b1111_1111,
@@ -103,13 +110,14 @@ impl VideoProcessor {
 impl PortMapper for VideoProcessor {
     type WriteValue = (u8, u8);
     fn interest<C: CpuView>(&self, cpu: &C, addr: u8) -> bool {
-        addr == SFR_P2 || addr == SFR_P3
+        addr == SFR_P2 || addr == SFR_P3 || addr == SFR_P1
     }
     fn read<C: CpuView>(&self, cpu: &C, addr: u8) -> u8 {
         if addr == SFR_P3 {
             // trace!("P3 read {:02X} @ {:X}", self.p3_read, cpu.pc_ext());
         }
         match addr {
+            SFR_P1 => self.p1_read,
             SFR_P2 => self.p2,
             SFR_P3 => self.p3_read,
             _ => unreachable!(),
@@ -120,6 +128,7 @@ impl PortMapper for VideoProcessor {
             // trace!("P3 read latch {:02X} @ {:X}", self.p3, cpu.pc_ext());
         }
         match addr {
+            SFR_P1 => self.p1,
             SFR_P2 => self.p2,
             SFR_P3 => self.p3,
             _ => unreachable!(),
@@ -132,10 +141,14 @@ impl PortMapper for VideoProcessor {
         if addr == SFR_P2 {
             trace!("P2 write {:02X} @ {:X}", value, cpu.pc_ext());
         }
+        if addr == SFR_P1 {
+            trace!("P1 write {:02X} @ {:X}", value, cpu.pc_ext());
+        }
         (addr, value)
     }
     fn write(&mut self, (addr, value): Self::WriteValue) {
         match addr {
+            SFR_P1 => self.p1 = value,
             SFR_P2 => self.p2 = value,
             SFR_P3 => self.p3 = value,
             _ => unreachable!(),

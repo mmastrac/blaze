@@ -1,7 +1,8 @@
 use std::cell::Cell;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
-use std::os::fd::OwnedFd;
+use std::mem::MaybeUninit;
+use std::os::fd::{AsFd, AsRawFd, OwnedFd};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -95,9 +96,11 @@ fn connect_single_pipe(
                 Ok(b) => {
                     if b == 0x11 {
                         // XON
+                        trace!("DUART pipe XON");
                         software_flow_control_clone.store(true, Ordering::Relaxed);
                     } else if b == 0x13 {
                         // XOFF
+                        trace!("DUART pipe XOFF");
                         software_flow_control_clone.store(false, Ordering::Relaxed);
                     } else {
                         if !pipe_w.write_all(&[b]).is_ok() {
@@ -153,9 +156,11 @@ fn connect_dual_pipes(
                 Ok(b) => {
                     if b == 0x11 {
                         // XON
+                        trace!("DUART pipe XON");
                         software_flow_control_clone.store(true, Ordering::Relaxed);
                     } else if b == 0x13 {
                         // XOFF
+                        trace!("DUART pipe XOFF");
                         software_flow_control_clone.store(false, Ordering::Relaxed);
                     } else {
                         if !pipe_w.write_all(&[b]).is_ok() {
@@ -235,9 +240,11 @@ fn connect_exec(
                 Ok(b) => {
                     if b == 0x11 {
                         // XON
+                        trace!("DUART pty XON");
                         software_flow_control_clone.store(true, Ordering::Relaxed);
                     } else if b == 0x13 {
                         // XOFF
+                        trace!("DUART pty XOFF");
                         software_flow_control_clone.store(false, Ordering::Relaxed);
                     } else {
                         if !pty.write_all(&[b]).is_ok() {

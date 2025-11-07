@@ -1,3 +1,4 @@
+use bit_set::BitSet;
 use clap::Parser;
 use hex_literal::hex;
 use i8051::breakpoint::{Action, Breakpoints};
@@ -27,6 +28,7 @@ mod lk201;
 mod memory;
 mod nvr;
 mod screen;
+mod ssu;
 mod video;
 
 use memory::{Bank, RAM, ROM, VideoProcessor};
@@ -127,6 +129,11 @@ struct System {
 
     keyboard: LK201,
     breakpoints: Breakpoints,
+
+    #[cfg(feature = "pc-trace")]
+    pc_bitset: BitSet,
+    #[cfg(feature = "pc-trace")]
+    pc_bitset_current: BitSet,
 }
 
 impl System {
@@ -194,6 +201,10 @@ impl System {
             default: DefaultPortMapper::default(),
             keyboard: LK201::new(in_kbd.clone(), out_kbd),
             breakpoints: Breakpoints::new(),
+            #[cfg(feature = "pc-trace")]
+            pc_bitset: BitSet::with_capacity(0x10000),
+            #[cfg(feature = "pc-trace")]
+            pc_bitset_current: BitSet::with_capacity(0x10000),
         })
     }
 
@@ -214,6 +225,11 @@ impl System {
             );
         }
 
+        #[cfg(feature = "pc-trace")]
+        {
+            self.pc_bitset.insert(cpu.pc_ext(self) as usize);
+        }
+
         self.memory.tick();
         self.keyboard.tick();
         self.serial.tick(cpu);
@@ -228,7 +244,7 @@ impl System {
             trace!("DUART interrupt");
         }
         let dtr_a = self.memory.duart.output_bits_inv & (1 << 1) != 0;
-        let dtr_b = self.memory.duart.output_bits_inv & (1 << 3) != 0;
+        let dtr_b = self.memory.duart.output_bits_inv & (1 << 7) != 0;
         if self.dtr_a.replace(dtr_a) != dtr_a {
             trace!("DUART pipe A DTR changed to {}", self.dtr_a.get());
         }
@@ -544,6 +560,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     breakpoints.add(
         true,
+        0x2d5e,
+        Action::Log("Processing SSU probe".to_string()),
+    );
+
+    breakpoints.add(
+        true,
         0x16a0d,
         Action::Log("Dispatching keystroke".to_string()),
     );
@@ -743,6 +765,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // CPU execution loop
         let mut running = true;
+        let mut pc_trace = false;
         let mut compose_special_key = false;
         let mut hex = DisplayMode::Normal;
         loop {
@@ -833,6 +856,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                                 KeyCode::Char('d') => {
                                     fs::write("/tmp/vram.bin", &system.memory.vram[0..])?;
+                                }
+                                #[cfg(feature = "pc-trace")]
+                                KeyCode::Char('p') => {
+                                    use std::io::Write;
+                                    if !pc_trace {
+                                        system.pc_bitset_current = system.pc_bitset.clone();
+                                        pc_trace = true;
+                                        let mut pc_trace_file = File::create("/tmp/pc_trace.txt")?;
+                                        writeln!(pc_trace_file, "PC trace started")?;
+                                    } else {
+                                        let difference =
+                                            system.pc_bitset.difference(&system.pc_bitset_current);
+                                        let mut pc_trace_file = File::create("/tmp/pc_trace.txt")?;
+                                        for pc in difference {
+                                            writeln!(pc_trace_file, "0x{:04X}", pc)?;
+                                        }
+                                        pc_trace = false;
+                                    }
                                 }
                                 KeyCode::Char(c) => {
                                     _ = sender.send_ctrl_char(c);
