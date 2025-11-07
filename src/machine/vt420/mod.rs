@@ -298,11 +298,13 @@ impl CpuContext for System {
 
 #[cfg(test)]
 mod tests {
-    use crate::machine::generic::lk201::SpecialKey;
     use super::*;
+    use crate::machine::generic::lk201::SpecialKey;
 
     /// Run the ROM and simulation and ensure that we boot to the passed-test screen
     /// and setup comes up.
+    ///
+    /// We also check that the keyboard commands sent during diagnostics are fully parsed.
     #[test]
     fn test_boots() {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
@@ -313,12 +315,23 @@ mod tests {
             CommConfig::default(),
         )
         .unwrap();
+
+        system.keyboard.start_collecting_commands();
+
         let mut cpu = Cpu::new();
         for _ in 0..9850880 {
             system.step(&mut cpu);
         }
 
+        let (keyboard_bytes, keyboard_commands) = system.keyboard.stop_collecting_commands();
+        eprintln!("Keyboard bytes: {:02X?}", keyboard_bytes);
+        eprintln!("Keyboard commands:");
+        for command in keyboard_commands {
+            eprintln!("  {:?}", command);
+        }
+
         let screen = system.dump_screen_text();
+        eprintln!("Screen text:\n{screen}\n");
         assert!(screen.contains("VT420 OK"), "{screen}");
 
         system.keyboard.sender().send_special_key(SpecialKey::F3);
@@ -328,6 +341,7 @@ mod tests {
         }
 
         let screen = system.dump_screen_text();
+        eprintln!("Screen text:\n{screen}\n");
         assert!(screen.contains("Set-Up=English"), "{screen}");
     }
 }

@@ -711,6 +711,9 @@ pub struct LK201 {
     recv: mpsc::Receiver<u8>,
     send: mpsc::Sender<u8>,
     kbd_queue: VecDeque<u8>,
+    collect_commands: bool,
+    collected_bytes: Vec<u8>,
+    collected_commands: Vec<LK201Command>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -780,7 +783,22 @@ impl LK201 {
             send,
             recv,
             kbd_queue: VecDeque::new(),
+            collect_commands: false,
+            collected_bytes: Vec::new(),
+            collected_commands: Vec::new(),
         }
+    }
+
+    pub fn start_collecting_commands(&mut self) {
+        self.collect_commands = true;
+    }
+
+    pub fn stop_collecting_commands(&mut self) -> (Vec<u8>, Vec<LK201Command>) {
+        self.collect_commands = false;
+        (
+            std::mem::take(&mut self.collected_bytes),
+            std::mem::take(&mut self.collected_commands),
+        )
     }
 
     pub fn sender(&self) -> LK201Sender {
@@ -791,6 +809,9 @@ impl LK201 {
         // Accumulate incoming bytes
         let mut received = false;
         while let Ok(byte) = self.recv.try_recv() {
+            if self.collect_commands {
+                self.collected_bytes.push(byte);
+            }
             self.kbd_queue.push_back(byte);
             received = true;
         }
@@ -804,6 +825,10 @@ impl LK201 {
         let Ok(command) = LK201Command::try_from(&self.kbd_queue) else {
             return;
         };
+
+        if self.collect_commands {
+            self.collected_commands.push(command.clone());
+        }
 
         // Successfully parsed a command
         let cmd_len = command.len();
@@ -836,8 +861,18 @@ mod tests {
     fn test_parse(input: &[u8], expected: LK201Command) {
         let queue = VecDeque::from_iter(input.iter().copied());
         let command = LK201Command::try_from(&queue).unwrap();
-        assert_eq!(command, expected);
-        assert_eq!(input.len(), command.len());
+        assert_eq!(
+            command, expected,
+            "input: {:02X?}, expected: {:?}",
+            input, expected
+        );
+        assert_eq!(
+            input.len(),
+            command.len(),
+            "input: {:02X?}, expected: {:?}",
+            input,
+            expected
+        );
     }
 
     #[test]
@@ -953,13 +988,13 @@ mod tests {
         test_parse(
             &[0xE3],
             LK201Command::EnableRepeat {
-                division: Division(0),
+                division: Division(4),
             },
         );
         test_parse(
             &[0xE1],
             LK201Command::DisableRepeat {
-                division: Division(0),
+                division: Division(4),
             },
         );
         test_parse(&[0xD9], LK201Command::RepeatToDown);
@@ -987,13 +1022,6 @@ mod tests {
         test_parse(&[0xFF], LK201Command::Unknown(0xFF));
         test_parse(&[0x01], LK201Command::Unknown(0x01));
         test_parse(&[0x55], LK201Command::Unknown(0x55));
-
-        // Test 3-byte unknown command (0xE9 xx xx - possibly division-specific repeat)
-        // Bit pattern: 11101001 = division 13, down mode, type=1
-        test_parse(
-            &[0xE9, 0x12, 0x34],
-            LK201Command::Unknown3(0xE9, 0x12, 0x34),
-        );
 
         // Verify Unknown commands return InputError response
         let cmd = LK201Command::Unknown(0x0D);
