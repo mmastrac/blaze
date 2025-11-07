@@ -12,7 +12,7 @@ use i8051::sfr::SFR_P3;
 use i8051::{CpuView, MemoryMapper, PortMapper, ReadOnlyMemoryMapper};
 use tracing::{info, trace};
 
-use crate::machine::generic::duart::{ReadRegister, WriteRegister, DUART};
+use crate::machine::generic::duart::{DUART, ReadRegister, WriteRegister};
 use crate::machine::generic::nvr::Nvr;
 use crate::machine::vt420::video::{Mapper, SyncGen, TIMING_60HZ, TIMING_70HZ};
 
