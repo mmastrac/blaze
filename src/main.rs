@@ -25,6 +25,7 @@ use i8051::Cpu;
 use crate::host::comm::CommConfig;
 use crate::host::screen::{DisplayMode, Screen};
 use crate::machine::generic::lk201::SpecialKey;
+use crate::machine::vt420;
 
 /// VT420 Terminal Emulator
 /// Emulates a VT420 terminal using an 8051 microcontroller
@@ -104,7 +105,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Level::INFO
     };
-    if args.display {
+    if args.display && !cfg!(feature = "graphics") {
         tracing_subscriber::fmt()
             .with_max_level(level)
             .with_ansi(false)
@@ -148,7 +149,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start CPU execution
     info!("Starting CPU execution...");
     let start_time = Instant::now();
-    let mut instruction_count = 0;
+    let mut instruction_count = 0_usize;
 
     // Parse comm1 configuration
     let comm1_pipes = if args.comm1_pipes.len() == 2 {
@@ -225,6 +226,148 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut terminal = ratatui::Terminal::new(CrosstermBackend::new(stdout()))?;
 
         if args.display {
+            #[cfg(feature = "graphics")]
+            {
+                use std::cell::RefCell;
+                use std::rc::Rc;
+
+                let sender = system.keyboard.sender();
+                let system = Rc::new(RefCell::new(system));
+                let system_clone = system.clone();
+                let mut render = move |frame: &mut [u8]| {
+                    let system = &*system_clone.borrow();
+                    if system.memory.mapper.get(6) & 0xf0 == 0xf0 {
+                        return;
+                    }
+                    struct Render<'a> {
+                        row: usize,
+                        row_offset: usize,
+                        row_height: usize,
+                        is_80: bool,
+                        status_row: bool,
+                        screen_2: bool,
+                        font: u8,
+                        frame: &'a mut [u8],
+                        invert: bool,
+                    }
+                    let mut render = Render {
+                        row: 0,
+                        row_offset: 0,
+                        row_height: 0,
+                        is_80: false,
+                        status_row: false,
+                        screen_2: system.memory.mapper.is_screen_2(),
+                        font: 0,
+                        frame,
+                        invert: false,
+                    };
+                    vt420::video::decode_vram(
+                        &system.memory.vram,
+                        &system.memory.mapper,
+                        |render, row, attr, row_height| {
+                            render.row += render.row_height;
+                            render.row_offset += 800 * 4 * render.row_height;
+                            render.row_height = row_height as usize;
+                            if attr & 0x02 != 0 {
+                                render.screen_2 = !render.screen_2;
+                            }
+                            render.invert = if render.screen_2 {
+                                system.memory.mapper.screen_2_invert()
+                            } else {
+                                system.memory.mapper.screen_1_invert()
+                            };
+                            render.font = if render.screen_2 {
+                                system.memory.mapper.get(0xc) & 0xf0
+                            } else {
+                                system.memory.mapper.get2(0xc) & 0xf0
+                            };
+                            render.is_80 = !if render.screen_2 {
+                                system.memory.mapper.screen_2_132_columns()
+                            } else {
+                                system.memory.mapper.screen_1_132_columns()
+                            };
+                            // Passing through status row in this attribute
+                            render.status_row = attr & 0x80 != 0;
+                            if render.status_row {
+                                render.is_80 = false;
+                            }
+                        },
+                        |render, column, c, attr| {
+                            let c = c as usize | ((((attr >> 2) & 0x01) as usize) << 8);
+                            let mut c = c * 2;
+                            if attr >> 2 & 0x8 != 0 && render.status_row {
+                                c = c.saturating_sub(1);
+                            }
+                            let bold = attr & 0x08 != 0;
+                            let color = if bold { 0xff } else { 0x80 };
+                            let mut font_address_base =
+                                c * 16 + 0x8000 + render.font as usize * 0x80;
+                            if render.is_80 {
+                                let font_address = font_address_base;
+                                for y in 0..render.row_height {
+                                    if render.row + y >= 416 {
+                                        break;
+                                    }
+                                    let offset = render.row_offset + y * 800 * 4;
+                                    for x in 0..10 {
+                                        let x_offset = (column as usize * 10 + x) * 4;
+                                        let mut pixel = if x >= 8 {
+                                            system.memory.vram[font_address + y + 16]
+                                                & (1 << (x - 8))
+                                                != 0
+                                        } else {
+                                            system.memory.vram[font_address + y] & (1 << x) != 0
+                                        };
+                                        if attr & 16 != 0 {
+                                            pixel = !pixel;
+                                        }
+                                        let color =
+                                            if pixel ^ render.invert { color } else { 0x00 };
+                                        render.frame[offset + x_offset] = color;
+                                        render.frame[offset + x_offset + 1] = color;
+                                        render.frame[offset + x_offset + 2] = color;
+                                        render.frame[offset + x_offset + 3] = 0xff;
+                                    }
+                                }
+                            } else {
+                                let font_address = font_address_base + 16;
+                                for y in 0..render.row_height {
+                                    if render.row + y >= 416 {
+                                        break;
+                                    }
+                                    let offset = render.row_offset + y * 800 * 4;
+                                    for x in 0..6 {
+                                        let x_offset = (column as usize * 6 + x) * 4;
+                                        let mut pixel = system.memory.vram[font_address + y]
+                                            & (1 << (x + 2))
+                                            != 0;
+                                        if attr & 16 != 0 {
+                                            pixel = !pixel;
+                                        }
+                                        let color =
+                                            if pixel ^ render.invert { color } else { 0x00 };
+                                        render.frame[offset + x_offset] = color;
+                                        render.frame[offset + x_offset + 1] = color;
+                                        render.frame[offset + x_offset + 2] = color;
+                                        render.frame[offset + x_offset + 3] = 0xff;
+                                    }
+                                }
+                            }
+                        },
+                        render,
+                    );
+                };
+
+                let mut step = move || {
+                    for _ in 0..20000 {
+                        system.borrow_mut().step(&mut cpu);
+                    }
+                };
+
+                host::wgpu::main(sender, render, step);
+                return Ok(());
+            }
+
             crossterm::terminal::enable_raw_mode()?;
             crossterm::execute!(io::stdout(), crossterm::terminal::EnterAlternateScreen,)?;
             terminal.clear()?;
@@ -508,8 +651,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
 
                         if args.show_vram {
-                            let vram = &system.memory.vram[0..256];
-                            for i in 0..8 {
+                            let vram = &system.memory.vram;
+                            for i in 0..16 {
                                 let mut vram_line = Line::default();
                                 for j in 0..32 {
                                     let attr = vram[i * 32 + j];
@@ -521,7 +664,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     vram_line,
                                     f.area().offset(Offset {
                                         x: 0,
-                                        y: (f.area().height as i32 - 8) + i as i32,
+                                        y: (f.area().height as i32 - 16) + i as i32,
                                     }),
                                 );
                             }

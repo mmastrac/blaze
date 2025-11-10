@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
-use tracing::{error, trace};
+use tracing::{error, info, trace};
 
 use crate::machine::generic::duart::DUARTChannel;
 
@@ -59,6 +59,7 @@ pub fn connect_duart(
 }
 
 fn connect_loopback(channel: DUARTChannel) -> Result<Rc<Cell<bool>>, std::io::Error> {
+    trace!("Connecting DUART loopback");
     thread::spawn(move || {
         loop {
             match channel.rx.recv() {
@@ -80,6 +81,7 @@ fn connect_single_pipe(
     channel: DUARTChannel,
     path: PathBuf,
 ) -> Result<Rc<Cell<bool>>, std::io::Error> {
+    info!("Connecting DUART single pipe to {:?}", path);
     let software_flow_control = Arc::new(AtomicBool::new(true));
     let rx = channel.rx;
     let tx = channel.tx;
@@ -141,6 +143,10 @@ fn connect_dual_pipes(
     pipe_r_path: PathBuf,
     pipe_w_path: PathBuf,
 ) -> Result<Rc<Cell<bool>>, std::io::Error> {
+    info!(
+        "Connecting DUART dual pipes to {:?} and {:?}",
+        pipe_r_path, pipe_w_path
+    );
     let software_flow_control = Arc::new(AtomicBool::new(true));
     let rx = channel.rx;
     let tx = channel.tx;
@@ -206,6 +212,7 @@ fn connect_exec(
 ) -> Result<Rc<Cell<bool>>, std::io::Error> {
     use pty_process::blocking::Command;
 
+    info!("Connecting DUART to shell process {:?}", cmd_string);
     let software_flow_control = Arc::new(AtomicBool::new(true));
     let rx = channel.rx;
     let tx = channel.tx;

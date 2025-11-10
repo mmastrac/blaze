@@ -98,36 +98,49 @@ Output:
  - 0x7ee4/0x7ee5: 16-bit register, copied to 0x7ff6 in two writes
  - 0x7ee6/0x7ee7: 16-bit register, copied to 0x7ffc in two writes
 
- - 0x7ef3:
+ - 0x7ef3 -> copied to 0x7ff3:
   - `...._..xx` => x = VRAM page?
   - `...._.x..` => CMNCLK?
- - 0x7ef4: (same as 7ef3 but for session 2)
+ - 0x7ef4 -> copied to 0x7ff4: (same as 7ef3 but for session 2)
   - `...._..xx` => x = VRAM page?
   - `...._.x..` => CMNCLK?
 
+ - 0x7ff0
+  - Smooth scrolling start register
+
+ - 0x7ff1
+  - Smooth scrolling stop register
+
+ - 0x7ff2
+  - Smooth scrolling offset register
 
  - 0x7ff3:
   - Set to `1010_0000` and then a delay - `1..._....` may be a reset
-  - `1..._....` => blink register?
-  - `..x._....` => VRAM page mapped at 0x8000?
-  - `...x_....` => x = Some sort of swizzle? Could be used to quickly swap registers. Used for session flipping.
-  - `...._x...` => x = screen register select?
-  - `...._.xx.` => possibly invert
-  - `...._...x` => 1 = 132 columns, 0 = 80 columns
+  - `.x.._....` => blink register? Toggles once per second (affects read of 7ff6)
+  - `..x._....` => VRAM page mapped at 0x8000? (only bit set at boot)
+  - `...x_....` => x = Swizzles 0x200/0x300 (possibly more addresses). Could be used to quickly swap registers. Used for session flipping.
+  - `...._x...` => screen select: 0 = session 1, 1 = session 2
+  - `...._.x..` => ???
+  - `...._..x.` => session 1: invert
+  - `...._...x` => session 1: 1 = 132 columns, 0 = 80 columns
   
  - 0x7ff4:
-  - `x..._....` => 1 = 70Hz (70Hz ~14.29ms/frame, 536 lines), 0 = 60Hz (60Hz ~16.67ms/frame, 625 lines) (CONFIRMED via ROM disassembly)
+  - `...x_....` => 1 = 70Hz (70Hz ~14.29ms/frame, 536 lines), 0 = 60Hz (60Hz ~16.67ms/frame, 625 lines) (CONFIRMED via ROM disassembly)
   - `.x.x_....` => 01 = normal VRAM layout? 11 = alternate VRAM layout? (memory existance is tested in bootstrap, 11 is set if not there, 0x40 is toggled every ~1s, possibly for updating background page ram)
-  - `...._..xx` => possibly invert/width
-  - `...._x...` => possibly page flip control?
-  
+  - `...._x...` => possibly page flip control? (affects read of 7ff6)
+  - `...._.x..` => ???
+  - `...._..x.` => session 2: invert
+  - `...._...x` => session 2: 1 = 132 columns, 0 = 80 columns
+
  - 0x7ff5:
   - `.x.._....` => x = alternate RAM layout?
   - `..x._....` => x = 0 = force SRAM mapping?
   - `...x_x...` => x = VRAM page select?
   - `...._.x..` => x = ROM bank select (CONFIRMED via ROM disassembly)
-  
+  - `...._..xx` => ???
+
  - 0x7ff6: 2x 8-bit register, written twice, once for top and once for bottom half of screen
+    - Reads appear to be some sort of chargen status (uncertain, function of whole screen)
     - <a><b> - font height/row height (0 for 16px)
     - 78: 50 lines (0111_1000)
     - 9A: 38 lines (1001_1010)
@@ -137,6 +150,12 @@ Output:
  - 0x7ff7/0x7ff8: screen offset (x/y), default 0x1e for each
     - x: 0x0a -> 0x32 (20px)
     - y: 0x01 -> 0x3b (60px)
+
+ - 0x7ff9: 0
+ - 0x7ffa: 0x35? (53)
+ - 0x7ffb: 0
+ - 0x7ffc: font offset for screen
+
 
 ## Video Timing
 

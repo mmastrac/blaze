@@ -188,11 +188,15 @@ impl System {
         decode_vram(
             &self.memory.vram,
             &self.memory.mapper,
-            |text, _, _| {
+            |text, _, _, _| {
                 text.push_str("\n");
             },
             |text, _col, ch, _attrs| {
-                text.push(ch);
+                if ch == 0x00 {
+                    text.push_str(" ");
+                } else {
+                    text.push(ch as char);
+                }
             },
             text,
         )
