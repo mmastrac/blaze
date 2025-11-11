@@ -324,6 +324,21 @@ pub fn decode_vram<T>(
     data
 }
 
+/// Decode the font into a grid of pixels. For 80-column mode, the font is 10
+/// bytes width. For 132-column mode, the font is 6 bits wide.
+pub fn decode_font(vram: &[u8], address: u32, is_80: bool, char: &mut [u16; 16]) {
+    if is_80 {
+        for y in 0..16 {
+            char[y] = vram[address as usize + y] as u16
+                | ((vram[address as usize + y + 16] & 3) as u16) << 8;
+        }
+    } else {
+        for y in 0..16 {
+            char[y] = (vram[address as usize + y] >> 2) as u16;
+        }
+    }
+}
+
 /// This handles a read of 0x7ff6. We don't know what this register does, but it
 /// appears to return something that is a function of 80/132 column mode,
 /// invert, the "screen selection toggle" row attribute (along with double-width
