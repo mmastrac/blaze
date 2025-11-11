@@ -3,7 +3,8 @@
 Blaze is an emulator for the VT420 terminal. It is a work in progress and is not
 yet complete.
 
-It is build on top of [the i8051 emulator crate](https://crates.io/crates/i8051).
+It is build on top of
+[the i8051 emulator crate](https://crates.io/crates/i8051).
 
 The emulator includes a debugger and TUI for running the emulator with an
 emulated display and keyboard.
@@ -11,18 +12,21 @@ emulated display and keyboard.
 ## Features
 
 Emulates the VT420 terminal:
-  - LK201 keyboard
-  - DC7166B/DC7166C video processor
-  - 8051 CPU
-  - 5911 EEPROM
-  - DUART
+
+- LK201 keyboard
+- DC7166B/DC7166C video processor, including:
+  - Smooth scrolling
+  - Multi-session support
+  - 132-column support
+- 8051 CPU
+- 5911 EEPROM
+- DUART
 
 ## Screenshots
 
 Graphical UI:
 
-![Screenshot](docs/screenshot-1.png)
-![Screenshot](docs/screenshot-2.png)
+![Screenshot](docs/screenshot-1.png) ![Screenshot](docs/screenshot-2.png)
 
 Textual UI:
 
@@ -44,20 +48,22 @@ cargo run --all-features --release -- --rom roms/vt420/23-068E9-00.bin --display
 Input is still a work in progress, but the following keys are supported:
 
 Supported input keys:
- - Standard text-printing characters
- - Special keys:
-   - F1-F5
-   - Up, Down, Left, Right
-   - Enter
-   - Escape
+
+- Standard text-printing characters
+- Special keys:
+  - F1-F5
+  - Up, Down, Left, Right
+  - Enter
+  - Escape
 
 Emulator control keys (text display-mode only):
- - Ctrl+G: Enter command mode
-  - Q: Quit (or Ctrl+F, then Q)
-  - (1,2,3,4,5): Send F1-F5 if your terminal doesn't support them
-  - D: Dump VRAM to /tmp/vram.bin
-  - H: Toggle hex display mode for VRAM
-  - Space: Toggle running/pausing
+
+- Ctrl+G: Enter command mode
+- Q: Quit (or Ctrl+F, then Q)
+- (1,2,3,4,5): Send F1-F5 if your terminal doesn't support them
+- D: Dump VRAM to /tmp/vram.bin
+- H: Toggle hex display mode for VRAM
+- Space: Toggle running/pausing
 
 `--show-vram` and `--show-mapper` can be used to display the first 256 bytes of
 the video RAM and mapper registers in real time while `--display` is enabled.
