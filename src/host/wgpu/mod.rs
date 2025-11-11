@@ -69,15 +69,23 @@ impl Game {
             }
         }
 
-        b"abcdefghijklmnopqrstuvwxyz 0123456789"
+        b"abcdefghijklmnopqrstuvwxyz0123456789.,-_=+"
             .iter()
             .for_each(|&c| {
                 let s = &[c];
                 let s = str::from_utf8(s).unwrap();
                 if self.input.key_pressed_logical(Key::Character(s)) {
-                    self.sender.send_char(c as char);
+                    if self.input.held_control() {
+                        self.sender.send_ctrl_char(c as char);
+                    } else {
+                        self.sender.send_char(c as char);
+                    }
                 }
             });
+
+        if self.input.key_pressed(KeyCode::Space) {
+            self.sender.send_char(' ');
+        }
 
         if self.input.key_pressed(KeyCode::Escape) {
             self.sender.send_escape();
