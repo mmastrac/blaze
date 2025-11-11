@@ -83,7 +83,7 @@ Alternatively, you can run headlessly and use --trace which is useful in some
 cases:
 
 ```
-# cargo run --release -- --rom roms/vt420/23-068E9-00.bin --trace -v
+# cargo run --release -- --rom roms/vt420/23-068E9-00.bin --trace -v --display=headless
 VT420 Emulator starting...
 ROM file: "roms/vt420/23-068E9-00.bin"
 Initializing 8051 CPU emulator...
