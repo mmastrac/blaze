@@ -17,6 +17,17 @@ Emulates the VT420 terminal:
   - 5911 EEPROM
   - DUART
 
+## Screenshots
+
+Graphical UI:
+
+![Screenshot](docs/screenshot-1.png)
+![Screenshot](docs/screenshot-2.png)
+
+Textual UI:
+
+![Screenshot](docs/vt.gif)
+
 ## Quick Start
 
 ```
@@ -49,10 +60,6 @@ Emulator control keys:
 the video RAM and mapper registers in real time while `--display` is enabled.
 
 `--log` and `-v` will output trace messages to /tmp/blaze-vt.log.
-
-## Screenshot
-
-![Screenshot](docs/vt.gif)
 
 ## Debugging
 
