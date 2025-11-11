@@ -1,5 +1,11 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
 use i8051::Cpu;
-use i8051_debug_tui::Debugger;
+use i8051_debug_tui::{Debugger, DebuggerState};
+use ratatui::crossterm;
 
 use crate::{
     System,
@@ -142,17 +148,19 @@ pub fn run(
     mut cpu: Cpu,
     debugger: Option<Debugger>,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    use std::cell::RefCell;
-    use std::rc::Rc;
+    if let Some(debugger) = debugger {
+        return run_debugger(system, cpu, debugger);
+    }
 
     let sender = system.keyboard.sender();
     let system = Rc::new(RefCell::new(system));
     let render = crate::host::screen::wgpu::WgpuRender::default();
 
     let system_clone = system.clone();
-    let mut step = move || {
+    let stepper = move || {
+        let mut system = system_clone.borrow_mut();
         for _ in 0..20000 {
-            system_clone.borrow_mut().step(&mut cpu);
+            system.step(&mut cpu);
         }
     };
 
@@ -160,8 +168,60 @@ pub fn run(
     crate::host::wgpu::main(
         sender,
         move |frame| render.render(&system_clone.borrow(), frame),
-        step,
-    );
+        stepper,
+    )?;
+
+    return Ok(system.borrow().instruction_count);
+}
+
+fn run_debugger(
+    system: System,
+    mut cpu: Cpu,
+    mut debugger: Debugger,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    debugger.enter()?;
+
+    let sender = system.keyboard.sender();
+    let system = Rc::new(RefCell::new(system));
+    let render = crate::host::screen::wgpu::WgpuRender::default();
+
+    let system_clone = system.clone();
+    let stepper = move || {
+        let system = &mut *system_clone.borrow_mut();
+        debugger.render(&cpu, system).unwrap();
+        if crossterm::event::poll(Duration::from_millis(0)).unwrap() {
+            let Ok(event) = crossterm::event::read() else {
+                return;
+            };
+            if debugger.handle_event(event, &mut cpu, system) {
+                system.step(&mut cpu);
+            }
+            debugger.render(&cpu, system).unwrap();
+        }
+        for _ in 0..20000 {
+            match debugger.debugger_state() {
+                DebuggerState::Running => {
+                    system.step(&mut cpu);
+                }
+                DebuggerState::Paused => {
+                    return;
+                }
+                DebuggerState::Quit => {
+                    return;
+                }
+            }
+            if debugger.breakpoints().contains(&cpu.pc_ext(system)) {
+                debugger.pause();
+            }
+        }
+    };
+
+    let system_clone = system.clone();
+    crate::host::wgpu::main(
+        sender,
+        move |frame| render.render(&system_clone.borrow(), frame),
+        stepper,
+    )?;
 
     return Ok(system.borrow().instruction_count);
 }
