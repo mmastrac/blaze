@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
-use tracing::{error, info, trace};
+use tracing::{debug, error, info, trace};
 
 use crate::machine::generic::duart::DUARTChannel;
 
@@ -59,7 +59,7 @@ pub fn connect_duart(
 }
 
 fn connect_loopback(channel: DUARTChannel) -> Result<Rc<Cell<bool>>, std::io::Error> {
-    trace!("Connecting DUART loopback");
+    info!("Connecting DUART loopback");
     thread::spawn(move || {
         loop {
             match channel.rx.recv() {
@@ -86,10 +86,10 @@ fn connect_single_pipe(
     let rx = channel.rx;
     let tx = channel.tx;
 
-    eprintln!("Opening {:?} as read/write", path);
+    debug!("Opening {:?} as read/write", path);
     let mut pipe_r = OpenOptions::new().read(true).write(true).open(&path)?;
     let mut pipe_w = pipe_r.try_clone()?;
-    eprintln!("Opened!");
+    debug!("Opened!");
 
     let software_flow_control_clone = software_flow_control.clone();
     thread::spawn(move || {
@@ -98,11 +98,11 @@ fn connect_single_pipe(
                 Ok(b) => {
                     if b == 0x11 {
                         // XON
-                        trace!("DUART pipe XON");
+                        debug!("DUART pipe XON");
                         software_flow_control_clone.store(true, Ordering::Relaxed);
                     } else if b == 0x13 {
                         // XOFF
-                        trace!("DUART pipe XOFF");
+                        debug!("DUART pipe XOFF");
                         software_flow_control_clone.store(false, Ordering::Relaxed);
                     } else {
                         if !pipe_w.write_all(&[b]).is_ok() {
@@ -113,7 +113,7 @@ fn connect_single_pipe(
                 _ => break,
             }
         }
-        trace!("DUART pipe write thread exited");
+        debug!("DUART pipe write thread exited");
     });
 
     thread::spawn(move || {

@@ -85,9 +85,9 @@ struct Args {
     #[arg(value_parser = parse_hex_address, long="bp", alias="breakpoint")]
     breakpoint: Vec<u32>,
 
-    /// Enable instruction tracing
+    /// Enable logging
     #[arg(long)]
-    trace: bool,
+    log: bool,
 
     /// Enable verbose output
     #[arg(short, long)]
@@ -100,36 +100,22 @@ fn parse_hex_address(s: &str) -> Result<u32, Box<dyn std::error::Error + Send + 
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+
     let level = if args.verbose {
         Level::TRACE
     } else {
         Level::INFO
     };
-    if args.display && !cfg!(feature = "graphics") {
-        tracing_subscriber::fmt()
-            .with_max_level(level)
-            .with_ansi(false)
-            .with_writer(File::create("/tmp/blaze-vt.log").unwrap())
-            .init();
-    } else if !args.debug {
-        let format = tracing_subscriber::fmt::format()
-            .with_target(false)
-            .with_line_number(false)
-            .with_level(false)
-            .without_time();
-        if stdout().is_terminal() {
-            tracing_subscriber::fmt()
-                .with_max_level(level)
-                .event_format(format)
-                .log_internal_errors(false)
-                .init();
+
+    if !args.debug {
+        if args.display {
+            if cfg!(feature = "graphics") {
+                host::logging::setup_logging_stdio(level);
+            } else if args.log {
+                host::logging::setup_logging_file(level);
+            }
         } else {
-            tracing_subscriber::fmt()
-                .with_ansi(false)
-                .with_max_level(level)
-                .event_format(format)
-                .log_internal_errors(false)
-                .init();
+            host::logging::setup_logging_stdio(level);
         }
     }
 
@@ -171,7 +157,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         System::new(&args.rom, args.nvr.as_deref(), comm1_config, comm2_config).unwrap();
 
     let breakpoints = &mut system.breakpoints;
-    create_breakpoints(breakpoints, &system.rom);
+    if args.log {
+        create_breakpoints(breakpoints, &system.rom);
+    }
 
     info!("CPU initialized, PC = 0x{:04X}", cpu.pc_ext(&system));
 

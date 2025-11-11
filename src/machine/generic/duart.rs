@@ -175,8 +175,12 @@ pub struct DUART {
     channel_a_tx_pending: Option<u8>,
     channel_b_rx_pending: Cell<Option<u8>>,
     channel_b_tx_pending: Option<u8>,
+    clock_select_warned: bool,
+    reset_sleep: u16,
+    interrupt_mask: u8,
 
     pub interrupt: bool,
+    first_interrupt: bool,
     pub input_bits: u8,
     pub output_bits_inv: u8,
 }
@@ -202,6 +206,10 @@ impl DUART {
                 input_bits: 0,
                 output_bits_inv: 0,
                 interrupt: false,
+                interrupt_mask: 0,
+                clock_select_warned: false,
+                first_interrupt: true,
+                reset_sleep: 0xffff,
             },
             channel_a2,
             channel_b2,
@@ -334,6 +342,20 @@ impl DUART {
             WriteRegister::TxHoldingRegisterB => {
                 self.channel_b_tx_pending = Some(value);
             }
+            WriteRegister::ClockSelectRegisterA | WriteRegister::ClockSelectRegisterB => {
+                if !self.clock_select_warned {
+                    warn!("DUART clock select register write ignored, running at fixed baud rate");
+                    self.clock_select_warned = true;
+                }
+            }
+            WriteRegister::InterruptMaskRegister => {
+                self.interrupt_mask = value;
+                if value != 0 && value != 0x22 {
+                    warn!(
+                        "DUART interrupt mask write only handles 0 and 0x22, other values are ignored: {value:02X}"
+                    );
+                }
+            }
             _ => {
                 warn!(
                     "DUART write of {value:02X} to to unhandled register: {:?}",
@@ -344,6 +366,11 @@ impl DUART {
     }
 
     pub fn tick(&mut self) {
+        if self.reset_sleep != 0 {
+            self.reset_sleep = self.reset_sleep.saturating_sub(1);
+            return;
+        }
+
         if self.mode_register_a.1 & 0b1000_0000 != 0 {
             if let Some(tx) = self.channel_a_tx_pending.take() {
                 trace!(
@@ -397,7 +424,12 @@ impl DUART {
             }
         }
 
-        self.interrupt =
-            self.channel_a_rx_pending.get().is_some() || self.channel_b_rx_pending.get().is_some();
+        self.interrupt = self.interrupt_mask != 0
+            && (self.channel_a_rx_pending.get().is_some()
+                || self.channel_b_rx_pending.get().is_some());
+        if self.interrupt && self.first_interrupt {
+            warn!("First DUART interrupt fired");
+            self.first_interrupt = false;
+        }
     }
 }

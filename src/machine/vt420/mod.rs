@@ -13,6 +13,7 @@ use hex_literal::hex;
 use i8051::breakpoint::Breakpoints;
 use i8051::peripheral::{P3_INT1, Serial, Timer};
 use i8051::{Cpu, CpuContext, CpuView, DefaultPortMapper, PortMapper};
+use tracing::debug;
 use tracing::{info, trace, warn};
 
 use crate::host::comm::{self, CommConfig};
@@ -132,7 +133,7 @@ impl System {
         cpu.step(self);
         let new_0x1f = cpu.internal_ram[0x1f];
         if prev_0x1f != new_0x1f {
-            info!(
+            debug!(
                 "0x1f changed from {prev_0x1f:02X} to {new_0x1f:02X} @ {:04X}",
                 cpu.pc_ext(self)
             );

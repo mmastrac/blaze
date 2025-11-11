@@ -10,6 +10,7 @@ use i8051::sfr::SFR_P1;
 use i8051::sfr::SFR_P2;
 use i8051::sfr::SFR_P3;
 use i8051::{CpuView, MemoryMapper, PortMapper, ReadOnlyMemoryMapper};
+use tracing::debug;
 use tracing::{info, trace};
 
 use crate::machine::generic::duart::{DUART, ReadRegister, WriteRegister};
@@ -291,7 +292,7 @@ impl MemoryMapper for RAM {
             MemoryTarget::Mapper => match offset {
                 0x6 => {
                     if tracing::enabled!(tracing::Level::TRACE) {
-                        trace!("VIDEO VRAM addr = {:02X?}", &self.vram[0..60]);
+                        debug!("VIDEO VRAM addr = {:02X?}", &self.vram[0..60]);
                     }
                     self.mapper.read_7ff6(&self.vram)
                 }
@@ -300,11 +301,11 @@ impl MemoryMapper for RAM {
             MemoryTarget::DUART => {
                 let read = ReadRegister::try_from(offset as u8).unwrap();
                 let value = self.duart.read(read);
-                trace!("DUART read {read:?} = {:02X} @ {:05X}", value, pc);
+                debug!("DUART read {read:?} = {:02X} @ {:05X}", value, pc);
                 value
             }
             MemoryTarget::Peripheral => {
-                info!(
+                debug!(
                     "Peripheral read: 0x{:04X} = 0x{:02X} @ {:05X}",
                     addr, self.peripheral[offset as usize], pc
                 );
@@ -344,7 +345,7 @@ impl MemoryMapper for RAM {
 
         match target {
             MemoryTarget::Mapper => {
-                info!(
+                debug!(
                     "Mapper write: 0x{:04X} = 0x{:02X} -> 0x{:02X} @ {pc:05X}",
                     addr,
                     self.mapper.get(offset as _),
@@ -355,7 +356,7 @@ impl MemoryMapper for RAM {
                 {
                     let old = self.mapper.sram_mapped();
                     let new = self.mapper.sram_mapped_value(value);
-                    info!("VIDEO: VRAM page changed: {} -> {}", old, new);
+                    debug!("VIDEO: VRAM page changed: {} -> {}", old, new);
                     if old == 1 && new == 0 {
                         let font = &self.vram[0..];
                         std::fs::write("/tmp/font.bin", font).unwrap();
@@ -363,10 +364,10 @@ impl MemoryMapper for RAM {
                 }
 
                 if offset == 0x5 {
-                    info!("Memory mapper bank write: {:02X}", value);
+                    debug!("Memory mapper bank write: {:02X}", value);
                     let bank = (value & 0x4) != 0;
                     if bank != self.rom_bank.get() {
-                        info!("RAM write bank changed: {}", bank as u8);
+                        debug!("RAM write bank changed: {}", bank as u8);
                         self.rom_bank.set(bank);
                     }
                 }
@@ -379,19 +380,19 @@ impl MemoryMapper for RAM {
             }
             MemoryTarget::DUART => {
                 let reg = WriteRegister::try_from(offset as u8).unwrap();
-                trace!("DUART write {reg:?} = {:02X} @ {:05X}", value, pc);
+                debug!("DUART write {reg:?} = {:02X} @ {:05X}", value, pc);
                 self.duart.write(reg, value);
             }
             MemoryTarget::Peripheral => {
-                info!("Peripheral write: 0x{:04X} = 0x{:02X}", addr, value);
+                debug!("Peripheral write: 0x{:04X} = 0x{:02X}", addr, value);
                 self.peripheral[offset as usize] = value;
             }
             MemoryTarget::VRAM => {
-                trace!("VRAM write: 0x{:04X} = 0x{:02X} @ {:05X}", addr, value, pc);
+                debug!("VRAM write: 0x{:04X} = 0x{:02X} @ {:05X}", addr, value, pc);
                 self.vram[offset as usize] = value;
             }
             MemoryTarget::SRAM => {
-                trace!("SRAM write: 0x{:04X} = 0x{:02X} @ {:05X}", addr, value, pc);
+                debug!("SRAM write: 0x{:04X} = 0x{:02X} @ {:05X}", addr, value, pc);
                 self.sram[offset as usize] = value;
             }
         }
