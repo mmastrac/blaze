@@ -38,6 +38,16 @@ pub fn setup_logging_stdio(level: tracing::Level) {
         .init();
 }
 
+pub fn setup_logging_debugger(
+    level: tracing::Level,
+    trace_collector: i8051_debug_tui::TracingCollector,
+) {
+    tracing_subscriber::registry()
+        .with(trace_collector)
+        .with(logging_targets(level))
+        .init();
+}
+
 fn logging_targets(level: tracing::Level) -> Targets {
     Targets::new()
         .with_target("wgpu_core", LevelFilter::OFF)

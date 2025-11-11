@@ -108,9 +108,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let trace_collector = TracingCollector::new(1000);
     if args.debug {
-        tracing_subscriber::registry()
-            .with(trace_collector.clone())
-            .init();
+        host::logging::setup_logging_debugger(level, trace_collector.clone());
     } else {
         match args.display {
             Display::Headless => {

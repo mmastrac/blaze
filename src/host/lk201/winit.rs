@@ -15,6 +15,7 @@ pub fn update_keyboard(input: &WinitInputHelper, sender: &LK201Sender) {
         (KeyCode::ArrowLeft, SpecialKey::Left),
         (KeyCode::ArrowRight, SpecialKey::Right),
         (KeyCode::Enter, SpecialKey::Return),
+        (KeyCode::Backspace, SpecialKey::Delete),
     ] {
         if input.key_pressed(key) {
             if input.held_control() {
@@ -32,7 +33,7 @@ pub fn update_keyboard(input: &WinitInputHelper, sender: &LK201Sender) {
         }
     }
 
-    b"abcdefghijklmnopqrstuvwxyz0123456789.,-_=+"
+    br#"""abcdefghijklmnopqrstuvwxyz0123456789.,-_=+:;'"[]{}\|"""#
         .iter()
         .for_each(|&c| {
             let s = &[c];

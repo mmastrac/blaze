@@ -363,7 +363,7 @@ fn run_inner(
                 }
             }
 
-            let vram = &system.memory.vram[0..];
+            let vram = &system.memory.vram[system.memory.mapper.vram_offset_display() as usize..];
             // Skip redrawing if the chargen is disabled
             if system.memory.mapper.get(6) & 0xf0 != 0xf0 {
                 terminal.draw(|f| {

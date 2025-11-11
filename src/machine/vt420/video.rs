@@ -62,19 +62,31 @@ impl Mapper {
         self.mapper2[offset as usize]
     }
 
-    pub fn sram_mapped(&self) -> u32 {
-        self.sram_mapped_value(self.mapper[3])
+    pub fn vram_offset(&self) -> u32 {
+        0x8000
     }
 
-    pub fn sram_mapped_value(&self, value: u8) -> u32 {
+    pub fn vram_offset_0(&self) -> u32 {
+        0
+    }
+
+    pub fn vram_offset_display(&self) -> u32 {
+        0
+    }
+
+    pub fn vram_8000_bit(&self) -> u32 {
+        self.vram_8000_bit_value(self.mapper[3])
+    }
+
+    pub fn vram_8000_bit_value(&self, value: u8) -> u32 {
         (value & 0x20 != 0) as u32
     }
 
-    pub fn vram_page(&self) -> u32 {
-        self.sram_mapped_value(self.mapper[5])
+    pub fn map_vram_at_8000(&self) -> u32 {
+        self.vram_8000_bit_value(self.mapper[5])
     }
 
-    pub fn vram_page_value(&self, value: u8) -> u32 {
+    pub fn map_vram_at_8000_value(&self, value: u8) -> u32 {
         (value & 0x08 != 0) as u32
     }
 
@@ -162,7 +174,11 @@ impl Mapper {
     }
 
     pub fn read_7ff6(&self, vram: &[u8]) -> u8 {
-        calculate_7ff6_read(self.get(3), self.get(4), &vram)
+        calculate_7ff6_read(
+            self.get(3),
+            self.get(4),
+            &vram[self.vram_offset_display() as usize..],
+        )
     }
 }
 

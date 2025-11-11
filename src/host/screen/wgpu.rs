@@ -42,7 +42,7 @@ impl WgpuRender {
         };
         let mut font = [0_u16; 16];
         decode_vram(
-            &system.memory.vram,
+            &system.memory.vram[system.memory.mapper.vram_offset_display() as usize..],
             &system.memory.mapper,
             |render, row, attr, row_height| {
                 render.row += render.row_height;
@@ -53,11 +53,11 @@ impl WgpuRender {
                     render.screen_2 = !render.screen_2;
                 }
                 // TODO: This flashes like crazy, something isn't quite right
-                // render.invert = if render.screen_2 {
-                //     system.memory.mapper.screen_2_invert()
-                // } else {
-                //     system.memory.mapper.screen_1_invert()
-                // };
+                render.invert = if render.screen_2 {
+                    system.memory.mapper.screen_2_invert()
+                } else {
+                    system.memory.mapper.screen_1_invert()
+                }; // ^ (system.memory.mapper.get(3) & 0x04 == 0);
                 render.font = if render.screen_2 {
                     system.memory.mapper.get(0xc) & 0xf0
                 } else {

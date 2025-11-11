@@ -221,7 +221,7 @@ fn swizzle_video_ram(addr: u16, bits: u8) -> u16 {
     } else {
         // E O E O -> O E E O
         // 2 3 4 5 -> 3 2 4 5 ?
-        if (0x000..0x400).contains(&addr) {
+        if (0x200..0x400).contains(&addr) {
             addr ^ 0x0100
         } else {
             addr
@@ -244,23 +244,22 @@ impl RAM {
             (MemoryTarget::Mapper, (addr & 0x0f) as u32)
         } else if (0x7fe0..=0x7fef).contains(&addr) {
             (MemoryTarget::DUART, (addr & 0x0f) as u32)
-        } else if (0x7e00..=0x7eff).contains(&addr) && self.mapper.get(3) & 0x04 == 0 {
+        } else if (0x7e00..=0x7eff).contains(&addr) {
+            //&& self.mapper.get(3) & 0x04 == 0 {
             (MemoryTarget::Peripheral, (addr & 0x0ff) as u32)
         } else if addr < 0x8000 {
-            let vram_offset = 0;
-            if (0x200..0x600).contains(&addr) {
+            if (0x200..0x400).contains(&addr) {
                 addr = swizzle_video_ram(addr, self.mapper.get(3));
             }
+            let vram_offset = self.mapper.vram_offset_0();
             (MemoryTarget::VRAM, vram_offset + addr as u32)
         } else {
-            if self.mapper.vram_page() == 1 {
-                // if self.sram_mapped() == 1 {
-                //     (MemoryTarget::VRAM, (addr - 0x8000) as u32)
-                // } else {
-                (MemoryTarget::VRAM, (addr) as u32)
-                // }
+            let addr = (addr & 0x7fff) as u32;
+            if self.mapper.map_vram_at_8000() == 1 {
+                let vram_offset = self.mapper.vram_offset();
+                (MemoryTarget::VRAM, addr + vram_offset)
             } else {
-                (MemoryTarget::SRAM, (addr - 0x8000) as u32)
+                (MemoryTarget::SRAM, addr)
             }
         }
     }
@@ -352,10 +351,10 @@ impl MemoryMapper for RAM {
                     value
                 );
                 if offset == 0x3
-                    && self.mapper.sram_mapped() ^ self.mapper.sram_mapped_value(value) != 0
+                    && self.mapper.vram_8000_bit() ^ self.mapper.vram_8000_bit_value(value) != 0
                 {
-                    let old = self.mapper.sram_mapped();
-                    let new = self.mapper.sram_mapped_value(value);
+                    let old = self.mapper.vram_8000_bit();
+                    let new = self.mapper.vram_8000_bit_value(value);
                     debug!("VIDEO: VRAM page changed: {} -> {}", old, new);
                     if old == 1 && new == 0 {
                         let font = &self.vram[0..];

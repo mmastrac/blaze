@@ -51,7 +51,7 @@ Supported input keys:
    - Enter
    - Escape
 
-Emulator control keys (text displaymode only):
+Emulator control keys (text display-mode only):
  - Ctrl+G: Enter command mode
   - Q: Quit (or Ctrl+F, then Q)
   - (1,2,3,4,5): Send F1-F5 if your terminal doesn't support them
