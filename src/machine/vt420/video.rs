@@ -83,11 +83,11 @@ impl Mapper {
     }
 
     pub fn map_vram_at_8000(&self) -> u32 {
-        self.vram_8000_bit_value(self.mapper[5])
+        self.map_vram_at_8000_value(self.mapper[5])
     }
 
     pub fn map_vram_at_8000_value(&self, value: u8) -> u32 {
-        (value & 0x08 != 0) as u32
+        (value & 0x20 != 0) as u32
     }
 
     pub fn is_screen_2(&self) -> bool {
