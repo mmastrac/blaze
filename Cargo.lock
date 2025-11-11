@@ -922,9 +922,9 @@ checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 
 [[package]]
 name = "i8051"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b45da457365ceffe422e9fd98d4687799644fbbb78afa30fdf2766aac869f0d8"
+checksum = "d67ef652653f04680adb913388105945145293a315b077ae66dacdcd634159c1"
 dependencies = [
  "bin_file",
  "bytemuck",
@@ -935,9 +935,9 @@ dependencies = [
 
 [[package]]
 name = "i8051-debug-tui"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "891506245de04175c412582a16b27e1414f9dfd5c543fcf8f97094c7488ba73f"
+checksum = "e2b064f4fc105bf5d3881c1d25ca8c066db31f76d2edce7a673a5f3a6a1746ae"
 dependencies = [
  "i8051",
  "ratatui",
@@ -948,9 +948,9 @@ dependencies = [
 
 [[package]]
 name = "i8051-proc-macro"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "55e934f0b1dce6ca293a04536c3dbba537d1a8adddf50a65995ca67baedd1ed3"
+checksum = "73b2be3003e670bbb6a37e8457dc09a97616888d1fd0a9b9c5a58f5ec37df72b"
 dependencies = [
  "proc-macro2",
  "quote",

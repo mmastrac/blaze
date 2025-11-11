@@ -31,11 +31,14 @@ Textual UI:
 ## Quick Start
 
 ```
-# Run the emulator with a display and comm1/2 in loopback mode
-cargo run --release -- --rom roms/vt420/23-068E9-00.bin --display
+# Run the emulator with a graphical display and comm1/2 in loopback mode
+cargo run --all-features --release -- --rom roms/vt420/23-068E9-00.bin --display=graphics
 
-# Run the emulator with a display and comm1 connected to "/bin/sh"
-cargo run --release -- --rom roms/vt420/23-068E9-00.bin --display --comm1-exec "/bin/sh"
+# Run the emulator with a graphical display and comm1 connected to "/bin/sh"
+cargo run --all-features --release -- --rom roms/vt420/23-068E9-00.bin --display=graphics --comm1-exec "/bin/sh"
+
+# Run the emulator with a text display and comm1 connected to "/bin/sh"
+cargo run --all-features --release -- --rom roms/vt420/23-068E9-00.bin --display=text --comm1-exec "/bin/sh"
 ```
 
 Input is still a work in progress, but the following keys are supported:
@@ -48,7 +51,7 @@ Supported input keys:
    - Enter
    - Escape
 
-Emulator control keys:
+Emulator control keys (text displaymode only):
  - Ctrl+G: Enter command mode
   - Q: Quit (or Ctrl+F, then Q)
   - (1,2,3,4,5): Send F1-F5 if your terminal doesn't support them

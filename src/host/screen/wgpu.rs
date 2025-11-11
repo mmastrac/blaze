@@ -1,3 +1,6 @@
+use i8051::Cpu;
+use i8051_debug_tui::Debugger;
+
 use crate::{
     System,
     machine::vt420::video::{decode_font, decode_vram},
@@ -132,4 +135,33 @@ impl WgpuRender {
             render,
         );
     }
+}
+
+pub fn run(
+    system: System,
+    mut cpu: Cpu,
+    debugger: Option<Debugger>,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let sender = system.keyboard.sender();
+    let system = Rc::new(RefCell::new(system));
+    let render = crate::host::screen::wgpu::WgpuRender::default();
+
+    let system_clone = system.clone();
+    let mut step = move || {
+        for _ in 0..20000 {
+            system_clone.borrow_mut().step(&mut cpu);
+        }
+    };
+
+    let system_clone = system.clone();
+    crate::host::wgpu::main(
+        sender,
+        move |frame| render.render(&system_clone.borrow(), frame),
+        step,
+    );
+
+    return Ok(system.borrow().instruction_count);
 }

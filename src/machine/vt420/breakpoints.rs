@@ -1,4 +1,5 @@
 use i8051::breakpoint::{Action, Breakpoints};
+use tracing::Level;
 
 use crate::machine::vt420::memory::ROM;
 
@@ -64,29 +65,37 @@ pub(crate) const BREAKPOINTS: &[(u32, &str)] = &[
 
 pub(crate) fn create_breakpoints(breakpoints: &mut Breakpoints, code: &ROM) {
     for &(addr, message) in BREAKPOINTS {
-        breakpoints.add(true, addr, Action::Log(message.to_string()));
+        breakpoints.add(true, addr, Action::Log(Level::INFO, message.into()));
     }
 
     for addr in code.find_bank_dispatch() {
         breakpoints.add(
             true,
             addr.dispatch_addr,
-            Action::Log(format!(
-                "Calling bank {}/{:X}h @ {:X}h",
-                addr.target_addr >> 16,
-                addr.id,
-                addr.target_addr
-            )),
+            Action::Log(
+                Level::INFO,
+                format!(
+                    "Calling bank {}/{:X}h @ {:X}h",
+                    addr.target_addr >> 16,
+                    addr.id,
+                    addr.target_addr
+                )
+                .into(),
+            ),
         );
         breakpoints.add(
             true,
             addr.target_addr,
-            Action::Log(format!(
-                "Entered bank {}/{:X}h @ {:X}h",
-                addr.target_addr >> 16,
-                addr.id,
-                addr.target_addr
-            )),
+            Action::Log(
+                Level::INFO,
+                format!(
+                    "Entered bank {}/{:X}h @ {:X}h",
+                    addr.target_addr >> 16,
+                    addr.id,
+                    addr.target_addr
+                )
+                .into(),
+            ),
         );
     }
 }

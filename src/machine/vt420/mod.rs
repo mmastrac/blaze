@@ -27,8 +27,9 @@ use self::memory::{Bank, DiagnosticMonitor, RAM, ROM, VideoProcessor};
 use bit_set::BitSet;
 
 pub(crate) struct System {
-    pub(crate) rom: ROM,
-    pub(crate) memory: RAM,
+    pub rom: ROM,
+    pub memory: RAM,
+    pub instruction_count: usize,
     bank: Bank,
     nvr_file: Option<PathBuf>,
     nvr_write: usize,
@@ -101,6 +102,7 @@ impl System {
             memory.nvr.mem[..initial_nvr.len()].copy_from_slice(&initial_nvr);
         }
         Ok(Self {
+            instruction_count: 0,
             bank,
             memory,
             rom,
@@ -123,6 +125,7 @@ impl System {
     }
 
     pub(crate) fn step(&mut self, cpu: &mut Cpu) {
+        self.instruction_count += 1;
         let start = Instant::now();
         let mut breakpoints = Breakpoints::default();
         mem::swap(&mut self.breakpoints, &mut breakpoints);

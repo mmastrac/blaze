@@ -1,11 +1,23 @@
-use ratatui::{
-    buffer::Buffer,
-    layout::Rect,
-    style::{Color, Style, Stylize},
-    widgets::Widget,
-};
+use std::fs::{self, File};
+use std::io;
+use std::time::{Duration, Instant};
 
-use crate::machine::vt420::video::Mapper;
+use i8051::Cpu;
+use i8051_debug_tui::Debugger;
+use ratatui::buffer::Buffer;
+use ratatui::crossterm;
+use ratatui::layout::Offset;
+use ratatui::layout::Rect;
+use ratatui::prelude::CrosstermBackend;
+use ratatui::style::{Color, Style, Stylize};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::Widget;
+
+use i8051::sfr::{SFR_P1, SFR_P2, SFR_P3};
+use tracing::warn;
+
+use crate::host::lk201::crossterm::{CrosstermKeyboard, KeyboardCommand};
+use crate::{System, machine::vt420::video::Mapper};
 
 pub struct Screen<'a> {
     vram: &'a [u8],
@@ -254,4 +266,169 @@ impl<'a> Widget for Screen<'a> {
             }
         }
     }
+}
+
+pub fn run(
+    system: System,
+    cpu: Cpu,
+    debugger: Option<Debugger>,
+    show_mapper: bool,
+    show_vram: bool,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    crossterm::terminal::enable_raw_mode()?;
+    crossterm::execute!(io::stdout(), crossterm::terminal::EnterAlternateScreen,)?;
+    crossterm::execute!(
+        io::stdout(),
+        crossterm::terminal::Clear(crossterm::terminal::ClearType::All),
+    )?;
+
+    let res = run_inner(system, cpu, debugger, show_mapper, show_vram)?;
+
+    crossterm::terminal::disable_raw_mode()?;
+    crossterm::execute!(io::stdout(), crossterm::terminal::LeaveAlternateScreen,)?;
+    Ok(res)
+}
+
+fn run_inner(
+    mut system: System,
+    mut cpu: Cpu,
+    debugger: Option<Debugger>,
+    mut show_mapper: bool,
+    mut show_vram: bool,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let mut running = true;
+    let mut hex = DisplayMode::Normal;
+    let mut pc_trace = false;
+    let mut keyboard = CrosstermKeyboard::default();
+    let mut terminal = ratatui::Terminal::new(CrosstermBackend::new(io::stdout()))?;
+    loop {
+        if running {
+            let pc = cpu.pc_ext(&system);
+            system.step(&mut cpu);
+
+            let new_pc = cpu.pc_ext(&system);
+            if new_pc & 0xffff == 0 {
+                warn!("CPU reset detected at PC = 0x{:04X}", pc);
+            }
+            if (0xbb..0x110).contains(&new_pc) {
+                warn!(
+                    "CPU weird step ({:02X}) detected at PC = 0x{:04X}",
+                    new_pc, pc
+                );
+            }
+        }
+
+        if system.instruction_count % 0x1000 == 0 || !running {
+            if crossterm::event::poll(Duration::from_millis(0))? {
+                let start = Instant::now();
+                let event = crossterm::event::read()?;
+                if start.elapsed() > Duration::from_millis(100) {
+                    warn!("Event read took too long: {:?}", start.elapsed());
+                }
+                match keyboard.update_keyboard(&event, &system.keyboard.sender()) {
+                    Some(KeyboardCommand::ToggleRun) => {
+                        running = !running;
+                    }
+                    Some(KeyboardCommand::ToggleHexMode) => {
+                        hex = match hex {
+                            DisplayMode::Normal => DisplayMode::NibbleTriplet,
+                            DisplayMode::NibbleTriplet => DisplayMode::Bytes,
+                            DisplayMode::Bytes => DisplayMode::Normal,
+                        };
+                    }
+                    Some(KeyboardCommand::DumpVRAM) => {
+                        fs::write("/tmp/vram.bin", &system.memory.vram[0..])?;
+                    }
+                    #[cfg(feature = "pc-trace")]
+                    Some(KeyboardCommand::TogglePCTrace) => {
+                        use std::io::Write;
+                        if !pc_trace {
+                            system.pc_bitset_current = system.pc_bitset.clone();
+                            pc_trace = true;
+                            let mut pc_trace_file = File::create("/tmp/pc_trace.txt")?;
+                            writeln!(pc_trace_file, "PC trace started")?;
+                        } else {
+                            let difference = system.pc_bitset.difference(&system.pc_bitset_current);
+                            let mut pc_trace_file = File::create("/tmp/pc_trace.txt")?;
+                            for pc in difference {
+                                writeln!(pc_trace_file, "0x{:04X}", pc)?;
+                            }
+                            pc_trace = false;
+                        }
+                    }
+                    Some(KeyboardCommand::Quit) => {
+                        break;
+                    }
+                    None => {}
+                }
+            }
+
+            let vram = &system.memory.vram[0..];
+            // Skip redrawing if the chargen is disabled
+            if system.memory.mapper.get(6) & 0xf0 != 0xf0 {
+                terminal.draw(|f| {
+                    let screen = Screen::new(vram, &system.memory.mapper).display_mode(hex);
+                    f.render_widget(screen, f.area());
+                    let stage = Span::styled(
+                        format!(
+                            "{:b}/{:02X}",
+                            cpu.internal_ram[0x1f], cpu.internal_ram[0x7e]
+                        ),
+                        Style::default().fg(Color::LightBlue),
+                    );
+                    let stage = stage.into_right_aligned_line();
+                    f.render_widget(stage, f.area());
+
+                    if show_mapper {
+                        let mut mapper_line = Line::default();
+                        for i in 0..16 {
+                            let attr = system.memory.mapper.get(i);
+                            let style = Style::default().fg(Color::Indexed(attr));
+                            let text = if i == 6 || i == 9 || i == 10 || i == 11 || i == 12 {
+                                Span::styled(
+                                    format!(
+                                        "{:02X}/{:02X} ",
+                                        system.memory.mapper.get(i),
+                                        system.memory.mapper.get2(i)
+                                    ),
+                                    style,
+                                )
+                            } else {
+                                Span::styled(format!("{:02X} ", system.memory.mapper.get(i)), style)
+                            };
+                            mapper_line.push_span(text);
+                        }
+                        mapper_line.push_span(format!(
+                            "{:02X} {:02X} {:02X}",
+                            cpu.sfr(SFR_P1, &system),
+                            cpu.sfr(SFR_P2, &system),
+                            cpu.sfr(SFR_P3, &system)
+                        ));
+                        f.render_widget(mapper_line, f.area());
+                    }
+
+                    if show_vram {
+                        let vram = &system.memory.vram;
+                        for i in 0..16 {
+                            let mut vram_line = Line::default();
+                            for j in 0..32 {
+                                let attr = vram[i * 32 + j];
+                                let style = Style::default().fg(Color::Indexed(attr));
+                                let text = Span::styled(format!("{:02X} ", attr), style);
+                                vram_line.push_span(text);
+                            }
+                            f.render_widget(
+                                vram_line,
+                                f.area().offset(Offset {
+                                    x: 0,
+                                    y: (f.area().height as i32 - 16) + i as i32,
+                                }),
+                            );
+                        }
+                    }
+                })?;
+            }
+        }
+    }
+    Ok(system.instruction_count)
 }

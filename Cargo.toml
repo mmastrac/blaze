@@ -15,8 +15,8 @@ bytemuck = { version = "1.24", features = ["derive"] }
 paste = "1"
 #i8051 = { path = "../i8051/crates/i8051" }
 #i8051-debug-tui = { path = "../i8051/crates/i8051-debug-tui" }
-i8051 = { version = "0.9.0" }
-i8051-debug-tui = { version = "0.9.0" }
+i8051 = { version = "0.10.0" }
+i8051-debug-tui = { version = "0.10.0" }
 tracing = "0.1.41"
 tracing-subscriber = "0.3.20"
 ratatui = "0.29.0"
@@ -33,6 +33,7 @@ winit_input_helper = { version = "=0.15", optional = true }
 tempfile = "3.23"
 
 [features]
+default = ["graphics"]
 pc-trace = []
 graphics = ["dep:pixels", "dep:game-loop", "dep:winit_input_helper"]
 
