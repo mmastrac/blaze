@@ -15,7 +15,7 @@ Emulates the VT420 terminal:
   - DC7166B/DC7166C video processor
   - 8051 CPU
   - 5911 EEPROM
-  - DUART (in progress)
+  - DUART
 
 ## Quick Start
 
@@ -38,16 +38,17 @@ Supported input keys:
    - Escape
 
 Emulator control keys:
- - Ctrl+Q: Quit (or Ctrl+F, then Q)
- - Ctrl+F (1,2,3,4,5): Send F1-F5 if your terminal doesn't support them
- - Ctrl+D: Dump VRAM to /tmp/vram.bin
- - Ctrl+H: Toggle hex display mode for VRAM
- - Ctrl+Space: Toggle running/pausing
+ - Ctrl+G: Enter command mode
+  - Q: Quit (or Ctrl+F, then Q)
+  - (1,2,3,4,5): Send F1-F5 if your terminal doesn't support them
+  - D: Dump VRAM to /tmp/vram.bin
+  - H: Toggle hex display mode for VRAM
+  - Space: Toggle running/pausing
 
 `--show-vram` and `--show-mapper` can be used to display the first 256 bytes of
 the video RAM and mapper registers in real time while `--display` is enabled.
 
-`--trace` and `-v` will output trace messages to /tmp/blaze-vt.log.
+`--log` and `-v` will output trace messages to /tmp/blaze-vt.log.
 
 ## Screenshot
 

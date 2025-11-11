@@ -8,18 +8,20 @@ const TIME_STEP: Duration = Duration::from_micros(1_000_000 / FPS as u64);
 
 use game_loop::winit;
 
-use game_loop::winit::keyboard::Key;
 use game_loop::{Time, TimeTrait as _, game_loop};
 use pixels::{Error, Pixels, SurfaceTexture};
 use std::sync::Arc;
 use std::time::Duration;
-use winit::{dpi::LogicalSize, event_loop::EventLoop, keyboard::KeyCode, window::WindowBuilder};
+use winit::{dpi::LogicalSize, event_loop::EventLoop, window::WindowBuilder};
 use winit_input_helper::WinitInputHelper;
 
-use crate::machine::generic::lk201::{LK201Sender, SpecialKey};
+use crate::host::lk201::winit::update_keyboard;
+use crate::machine::generic::lk201::LK201Sender;
+
+use tracing::error;
 
 /// Uber-struct representing the entire game.
-struct Game {
+struct Terminal {
     /// Software renderer.
     pixels: Pixels<'static>,
     /// Event manager.
@@ -30,8 +32,8 @@ struct Game {
     sender: LK201Sender,
 }
 
-impl Game {
-    fn new(pixels: Pixels<'static>, sender: LK201Sender, debug: bool) -> Self {
+impl Terminal {
+    fn new(pixels: Pixels<'static>, sender: LK201Sender) -> Self {
         Self {
             pixels,
             input: WinitInputHelper::new(),
@@ -41,58 +43,8 @@ impl Game {
     }
 
     fn update_controls(&mut self) {
-        for (key, mapping) in [
-            (KeyCode::F1, SpecialKey::F1),
-            (KeyCode::F2, SpecialKey::F2),
-            (KeyCode::F3, SpecialKey::F3),
-            (KeyCode::F4, SpecialKey::F4),
-            (KeyCode::F5, SpecialKey::F5),
-            (KeyCode::ArrowUp, SpecialKey::Up),
-            (KeyCode::ArrowDown, SpecialKey::Down),
-            (KeyCode::ArrowLeft, SpecialKey::Left),
-            (KeyCode::ArrowRight, SpecialKey::Right),
-            (KeyCode::Enter, SpecialKey::Return),
-        ] {
-            if self.input.key_pressed(key) {
-                if self.input.held_control() {
-                    if self.input.held_shift() {
-                        self.sender.send_shift_ctrl_special_key(mapping);
-                    } else {
-                        self.sender.send_ctrl_special_key(mapping);
-                    }
-                    self.sender.send_ctrl_special_key(mapping);
-                } else if self.input.held_shift() {
-                    self.sender.send_shift_special_key(mapping);
-                } else {
-                    self.sender.send_special_key(mapping);
-                }
-            }
-        }
-
-        b"abcdefghijklmnopqrstuvwxyz0123456789.,-_=+"
-            .iter()
-            .for_each(|&c| {
-                let s = &[c];
-                let s = str::from_utf8(s).unwrap();
-                if self.input.key_pressed_logical(Key::Character(s)) {
-                    if self.input.held_control() {
-                        self.sender.send_ctrl_char(c as char);
-                    } else {
-                        self.sender.send_char(c as char);
-                    }
-                }
-            });
-
-        if self.input.key_pressed(KeyCode::Space) {
-            self.sender.send_char(' ');
-        }
-
-        if self.input.key_pressed(KeyCode::Escape) {
-            self.sender.send_escape();
-        }
+        update_keyboard(&self.input, &self.sender);
     }
-
-    fn reset_game(&mut self) {}
 }
 
 pub fn main(
@@ -124,7 +76,7 @@ pub fn main(
     // Use the fill scaling mode which supports non-integer scaling.
     pixels.set_scaling_mode(pixels::ScalingMode::Fill);
 
-    let game = Game::new(pixels, sender, true);
+    let game = Terminal::new(pixels, sender);
 
     let res = game_loop(
         event_loop,
@@ -143,7 +95,7 @@ pub fn main(
             // g.game.world.draw(g.game.pixels.frame_mut());
             render(g.game.pixels.frame_mut());
             if let Err(err) = g.game.pixels.render() {
-                // log_error("pixels.render", err);
+                error!("pixels.render: {err}");
                 g.exit();
             }
 
@@ -169,7 +121,7 @@ pub fn main(
                 // Resize the window
                 if let Some(size) = g.game.input.window_resized() {
                     if let Err(err) = g.game.pixels.resize_surface(size.width, size.height) {
-                        // log_error("pixels.resize_surface", err);
+                        error!("pixels.resize_surface: {err}");
                         g.exit();
                     }
                 }
