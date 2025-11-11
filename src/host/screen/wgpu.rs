@@ -32,11 +32,18 @@ impl WgpuRender {
             status_row: bool,
             screen_2: bool,
             font: u8,
+            start_row: usize,
             frame: &'a mut [u8],
             invert: bool,
+            smooth: (u8, u8, u8),
         }
         let render = Render {
             screen_2: system.memory.mapper.is_screen_2(),
+            smooth: (
+                system.memory.mapper.get(0),
+                system.memory.mapper.get(1),
+                system.memory.mapper.get(2),
+            ),
             frame,
             ..Default::default()
         };
@@ -47,7 +54,20 @@ impl WgpuRender {
             |render, row, attr, row_height| {
                 render.row += render.row_height;
                 render.row_offset += 800 * 4 * render.row_height;
+
                 render.row_height = row_height as usize;
+                render.start_row = 0;
+                if render.smooth.2 != 0 {
+                    if (render.smooth.0..=render.smooth.1).contains(&row) {
+                        if row == render.smooth.0 {
+                            render.start_row = render.smooth.2 as usize;
+                            render.row_height = render.row_height - render.smooth.2 as usize;
+                        } else if row == render.smooth.1 {
+                            //render.start_row += 1;
+                            render.row_height = render.smooth.2 as usize;
+                        }
+                    }
+                }
                 render.double_width = attr == 0x4;
                 if attr & 0x02 != 0 {
                     render.screen_2 = !render.screen_2;
@@ -57,7 +77,7 @@ impl WgpuRender {
                     system.memory.mapper.screen_2_invert()
                 } else {
                     system.memory.mapper.screen_1_invert()
-                }; // ^ (system.memory.mapper.get(3) & 0x04 == 0);
+                };
                 render.font = if render.screen_2 {
                     system.memory.mapper.get(0xc) & 0xf0
                 } else {
@@ -94,15 +114,15 @@ impl WgpuRender {
                     &mut font,
                 );
                 let width = if render.is_80 { 10 } else { 6 };
+                let mut offset = render.row_offset;
                 for y in 0..render.row_height {
                     if render.row + y >= 416 {
                         break;
                     }
-                    let offset = render.row_offset + y * 800 * 4;
                     if render.double_width {
                         for x in 0..width {
                             let x_offset = (column as usize * width + x) * 8;
-                            let mut pixel = font[y] & (1 << x) != 0;
+                            let mut pixel = font[y + render.start_row] & (1 << x) != 0;
                             if underline && y == render.row_height - 1 {
                                 pixel = true;
                             }
@@ -122,7 +142,7 @@ impl WgpuRender {
                     } else {
                         for x in 0..width {
                             let x_offset = (column as usize * width + x) * 4;
-                            let mut pixel = font[y] & (1 << x) != 0;
+                            let mut pixel = font[y + render.start_row] & (1 << x) != 0;
                             if underline && y == render.row_height - 1 {
                                 pixel = true;
                             }
@@ -136,6 +156,7 @@ impl WgpuRender {
                             render.frame[offset + x_offset + 3] = 0xff;
                         }
                     }
+                    offset += 800 * 4;
                 }
             },
             render,
