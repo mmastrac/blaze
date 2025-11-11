@@ -117,10 +117,10 @@ Output:
  - 0x7ff3:
   - Set to `1010_0000` and then a delay - `1..._....` may be a reset
   - `.x.._....` => blink register? Toggles once per second (affects read of 7ff6)
-  - `..x._....` => VRAM page mapped at 0x8000? (only bit set at boot)
+  - `..x._....` => VRAM page mapped at 0x8000? (only bit set at boot, set while setting fonts)
   - `...x_....` => x = Swizzles 0x200/0x300 (possibly more addresses). Could be used to quickly swap registers. Used for session flipping.
   - `...._x...` => screen select: 0 = session 1, 1 = session 2
-  - `...._.x..` => ???
+  - `...._.x..` => set if either session 1 or 2 is inverted
   - `...._..x.` => session 1: invert
   - `...._...x` => session 1: 1 = 132 columns, 0 = 80 columns
   
@@ -154,7 +154,7 @@ Output:
  - 0x7ff9: 0
  - 0x7ffa: 0x35? (53)
  - 0x7ffb: 0
- - 0x7ffc: font offset for screen
+ - 0x7ffc: font offset for screen, 0x2 for 132 char
 
 
 ## Video Timing
