@@ -269,7 +269,10 @@ pub fn decode_vram<T>(
         }
 
         let max_columns = if row_is_132 { 132 } else { 80 };
-        let decoded_columns = max_columns.min(j);
+        let mut decoded_columns = max_columns.min(j);
+        if row_attrs == 0x4 {
+            decoded_columns >>= 1;
+        }
 
         for col in 0..decoded_columns {
             let value = line[col];

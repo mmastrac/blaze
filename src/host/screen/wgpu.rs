@@ -12,27 +12,24 @@ impl WgpuRender {
         if system.memory.mapper.get(6) & 0xf0 == 0xf0 {
             return;
         }
+
+        #[derive(Default)]
         struct Render<'a> {
             row: usize,
             row_offset: usize,
             row_height: usize,
             is_80: bool,
+            double_width: bool,
             status_row: bool,
             screen_2: bool,
             font: u8,
             frame: &'a mut [u8],
             invert: bool,
         }
-        let mut render = Render {
-            row: 0,
-            row_offset: 0,
-            row_height: 0,
-            is_80: false,
-            status_row: false,
+        let render = Render {
             screen_2: system.memory.mapper.is_screen_2(),
-            font: 0,
             frame,
-            invert: false,
+            ..Default::default()
         };
         let mut font = [0_u16; 16];
         decode_vram(
@@ -42,14 +39,16 @@ impl WgpuRender {
                 render.row += render.row_height;
                 render.row_offset += 800 * 4 * render.row_height;
                 render.row_height = row_height as usize;
+                render.double_width = attr == 0x4;
                 if attr & 0x02 != 0 {
                     render.screen_2 = !render.screen_2;
                 }
-                render.invert = if render.screen_2 {
-                    system.memory.mapper.screen_2_invert()
-                } else {
-                    system.memory.mapper.screen_1_invert()
-                };
+                // TODO: This flashes like crazy, something isn't quite right
+                // render.invert = if render.screen_2 {
+                //     system.memory.mapper.screen_2_invert()
+                // } else {
+                //     system.memory.mapper.screen_1_invert()
+                // };
                 render.font = if render.screen_2 {
                     system.memory.mapper.get(0xc) & 0xf0
                 } else {
@@ -73,6 +72,7 @@ impl WgpuRender {
                     c = c.saturating_sub(1);
                 }
                 let bold = attr & 0x08 != 0;
+                let underline = attr & 1 != 0;
                 let color = if bold { 0xff } else { 0x80 };
                 let mut font_address_base = c * 16 + 0x8000 + render.font as usize * 0x80;
                 if !render.is_80 {
@@ -90,17 +90,42 @@ impl WgpuRender {
                         break;
                     }
                     let offset = render.row_offset + y * 800 * 4;
-                    for x in 0..width {
-                        let x_offset = (column as usize * width + x) * 4;
-                        let mut pixel = font[y] & (1 << x) != 0;
-                        if attr & 16 != 0 {
-                            pixel = !pixel;
+                    if render.double_width {
+                        for x in 0..width {
+                            let x_offset = (column as usize * width + x) * 8;
+                            let mut pixel = font[y] & (1 << x) != 0;
+                            if underline && y == render.row_height - 1 {
+                                pixel = true;
+                            }
+                            if attr & 16 != 0 {
+                                pixel = !pixel;
+                            }
+                            let color = if pixel ^ render.invert { color } else { 0x00 };
+                            render.frame[offset + x_offset] = color;
+                            render.frame[offset + x_offset + 1] = color;
+                            render.frame[offset + x_offset + 2] = color;
+                            render.frame[offset + x_offset + 3] = 0xff;
+                            render.frame[offset + x_offset + 4] = color;
+                            render.frame[offset + x_offset + 5] = color;
+                            render.frame[offset + x_offset + 6] = color;
+                            render.frame[offset + x_offset + 7] = 0xff;
                         }
-                        let color = if pixel ^ render.invert { color } else { 0x00 };
-                        render.frame[offset + x_offset] = color;
-                        render.frame[offset + x_offset + 1] = color;
-                        render.frame[offset + x_offset + 2] = color;
-                        render.frame[offset + x_offset + 3] = 0xff;
+                    } else {
+                        for x in 0..width {
+                            let x_offset = (column as usize * width + x) * 4;
+                            let mut pixel = font[y] & (1 << x) != 0;
+                            if underline && y == render.row_height - 1 {
+                                pixel = true;
+                            }
+                            if attr & 16 != 0 {
+                                pixel = !pixel;
+                            }
+                            let color = if pixel ^ render.invert { color } else { 0x00 };
+                            render.frame[offset + x_offset] = color;
+                            render.frame[offset + x_offset + 1] = color;
+                            render.frame[offset + x_offset + 2] = color;
+                            render.frame[offset + x_offset + 3] = 0xff;
+                        }
                     }
                 }
             },
