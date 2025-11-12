@@ -4,7 +4,7 @@ use i8051_debug_tui::{Debugger, TracingCollector};
 use std::path::PathBuf;
 use tracing::{Level, error, info};
 
-#[cfg(not(feature = "wasm"))]
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
 mod host;
@@ -140,7 +140,7 @@ fn setup_logging(args: &Args, #[cfg(feature = "tui")] trace_collector: TracingCo
     }
 }
 
-#[cfg(feature = "wasm")]
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 fn start() {
     console_error_panic_hook::set_once();
@@ -237,7 +237,7 @@ fn run(
 
     info!("Starting CPU execution...");
     let cpu = Cpu::new();
-    #[cfg(not(feature = "wasm"))]
+    #[cfg(not(target_arch = "wasm32"))]
     let start_time = Instant::now();
     info!("CPU initialized, PC = 0x{:04X}", cpu.pc_ext(&system));
 
@@ -272,13 +272,13 @@ fn run(
         )?,
     };
 
-    #[cfg(not(feature = "wasm"))]
+    #[cfg(not(target_arch = "wasm32"))]
     let elapsed = start_time.elapsed();
     info!("CPU execution completed:");
     info!("  Instructions executed: {}", instruction_count);
-    #[cfg(not(feature = "wasm"))]
+    #[cfg(not(target_arch = "wasm32"))]
     info!("  Time elapsed: {:?}", elapsed);
-    #[cfg(not(feature = "wasm"))]
+    #[cfg(not(target_arch = "wasm32"))]
     if elapsed.as_secs_f64() > 0.0 {
         info!(
             "  Instructions per second: {:.0}",

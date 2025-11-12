@@ -33,12 +33,6 @@ winit_input_helper = { version = "=0.15", optional = true }
 pollster = { version = "0.4.0", optional = true }
 
 cargo-run-wasm = { version = "0.4.0", optional = true }
-console_error_panic_hook = { version = "0.1.7", optional = true }
-tracing-wasm = { version = "0.2.1", optional = true }
-wasm-bindgen = { version = "0.2.105", optional = true }
-wasm-bindgen-futures = { version = "0.4.46", optional = true }
-web-sys = { version = "0.3.82", optional = true, features = ["GpuTextureFormat", "Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement", "Event", "CssStyleDeclaration", "Navigator", "Gpu"] }
-js-sys = { version = "0.3.82", optional = true, features = [] }
 
 [dev-dependencies]
 tempfile = "3.23"
@@ -48,21 +42,24 @@ debug = true
 
 [features]
 default = ["graphics", "tui", "pty"]
+wasm = ["graphics", "embed-rom"]
 pc-trace = []
 pty = ["dep:pty-process"]
 tui = ["dep:ratatui", "dep:i8051-debug-tui"]
 graphics = ["dep:pixels", "dep:game-loop", "dep:winit_input_helper", "dep:pollster"]
-wasm = [
-    "dep:cargo-run-wasm", "dep:console_error_panic_hook", 
-    "dep:tracing-wasm", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", 
-    "dep:web-sys", "dep:js-sys",
-    "graphics", "embed-rom",
-]
 embed-rom = []
+run-wasm = ["dep:cargo-run-wasm"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = { version = "0.1.7" }
+tracing-wasm = { version = "0.2.1" }
+wasm-bindgen = { version = "0.2.105" }
+wasm-bindgen-futures = { version = "0.4.46" }
+web-sys = { version = "0.3.82", features = ["GpuTextureFormat", "Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement", "Event", "CssStyleDeclaration", "Navigator", "Gpu"] }
+js-sys = { version = "0.3.82", features = [] }
 
 [[example]]
 name = "disassemble-rom"
 
 [[example]]
 name = "run-wasm"
-required-features = ["wasm"]

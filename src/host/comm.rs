@@ -59,7 +59,7 @@ pub fn connect_duart(
     channel: DUARTChannel,
     config: CommConfig,
 ) -> Result<Rc<Cell<bool>>, std::io::Error> {
-    if cfg!(feature = "wasm") {
+    if cfg!(target_arch = "wasm32") {
         return Ok(Rc::new(Cell::new(true)));
     }
 

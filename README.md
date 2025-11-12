@@ -43,6 +43,9 @@ cargo run --all-features --release -- --rom roms/vt420/23-068E9-00.bin --display
 
 # Run the emulator with a text display and comm1 connected to "/bin/sh"
 cargo run --all-features --release -- --rom roms/vt420/23-068E9-00.bin --display=text --comm1-exec "/bin/sh"
+
+# Run the emulator in WASM and display the video output in a browser
+cargo run-wasm --bin blaze-vt --no-default-features --features=wasm --release
 ```
 
 Input is still a work in progress, but the following keys are supported:

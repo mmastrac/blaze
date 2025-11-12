@@ -7,7 +7,7 @@ use std::fs;
 use std::mem;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-#[cfg(not(feature = "wasm"))]
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{Duration, Instant};
 
 use hex_literal::hex;
@@ -134,7 +134,7 @@ impl System {
 
     pub(crate) fn step(&mut self, cpu: &mut Cpu) {
         self.instruction_count += 1;
-        #[cfg(not(feature = "wasm"))]
+        #[cfg(not(target_arch = "wasm32"))]
         let start = Instant::now();
         let mut breakpoints = Breakpoints::default();
         mem::swap(&mut self.breakpoints, &mut breakpoints);
@@ -191,7 +191,7 @@ impl System {
         mem::swap(&mut self.breakpoints, &mut breakpoints);
         breakpoints.run(false, cpu, self);
         mem::swap(&mut self.breakpoints, &mut breakpoints);
-        #[cfg(not(feature = "wasm"))]
+        #[cfg(not(target_arch = "wasm32"))]
         if start.elapsed() > Duration::from_millis(100) {
             warn!("Step took too long: {:?}", start.elapsed());
         }

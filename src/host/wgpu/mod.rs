@@ -47,7 +47,7 @@ impl Terminal {
     }
 }
 
-#[cfg(feature = "wasm")]
+#[cfg(target_arch = "wasm32")]
 /// Retrieve current width and height dimensions of browser client window
 fn get_window_size() -> LogicalSize<f64> {
     let client_window = web_sys::window().unwrap();
@@ -66,7 +66,7 @@ pub fn main(
     step: impl FnMut() + 'static,
 ) -> Result<(), Error> {
     let future = main_async(sender, render, step);
-    #[cfg(feature = "wasm")]
+    #[cfg(target_arch = "wasm32")]
     {
         wasm_bindgen_futures::spawn_local(async {
             if let Err(e) = future.await {
@@ -75,8 +75,14 @@ pub fn main(
         });
         Ok(())
     }
-    #[cfg(not(feature = "wasm"))]
+    #[cfg(not(target_arch = "wasm32"))]
     pollster::block_on(future)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn get_canvas(#[allow(unused)] window: &winit::window::Window) -> web_sys::HtmlCanvasElement {
+    use winit::platform::web::WindowExtWebSys;
+    window.canvas().unwrap()
 }
 
 pub async fn main_async(
@@ -86,7 +92,7 @@ pub async fn main_async(
 ) -> Result<(), Error> {
     let event_loop = EventLoop::new().unwrap();
 
-    #[cfg(feature = "wasm")]
+    #[cfg(target_arch = "wasm32")]
     js_sys::eval(
         r#"""
         console.log("Patching WebGPU GPUAdapter.requestDevice");
@@ -124,29 +130,19 @@ pub async fn main_async(
     info!("Graphics: window created");
 
     // Attach winit canvas to body element
-    #[cfg(feature = "wasm")]
+    #[cfg(target_arch = "wasm32")]
     {
         use js_sys::Promise;
         use wasm_bindgen::JsCast;
         use wasm_bindgen::closure::Closure;
         use wasm_bindgen_futures::JsFuture;
-        use winit::platform::web::WindowExtWebSys;
 
-        // Attach canvas to DOM first, before initializing pixels
-        let canvas = window.canvas().unwrap();
-        let canvas_element = web_sys::Element::from(canvas);
-
-        // Ensure canvas is visible and has explicit styling
-        let html_canvas: &web_sys::HtmlCanvasElement = canvas_element.dyn_ref().unwrap();
-        html_canvas
-            .style()
-            .set_property("display", "block")
-            .unwrap();
+        let canvas = get_canvas(&window);
 
         web_sys::window()
             .and_then(|win| win.document())
             .and_then(|doc| doc.body())
-            .and_then(|body| body.append_child(&canvas_element).ok())
+            .and_then(|body| body.append_child(&canvas).ok())
             .expect("couldn't append canvas to document body");
 
         info!("Graphics: canvas attached to document body");
@@ -187,9 +183,9 @@ pub async fn main_async(
     }
 
     let mut pixels = {
-        #[cfg(not(feature = "wasm"))]
+        #[cfg(not(target_arch = "wasm32"))]
         let window_size = window.inner_size();
-        #[cfg(feature = "wasm")]
+        #[cfg(target_arch = "wasm32")]
         let window_size = get_window_size().to_physical::<u32>(window.scale_factor());
 
         info!(
@@ -201,7 +197,7 @@ pub async fn main_async(
 
         let pixel_builder = PixelsBuilder::new(WIDTH as u32, HEIGHT as u32, surface_texture);
 
-        #[cfg(feature = "wasm")]
+        #[cfg(target_arch = "wasm32")]
         let pixel_builder = {
             // Web targets do not support the default texture format
             let texture_format = pixels::wgpu::TextureFormat::Rgba8Unorm;
@@ -241,7 +237,7 @@ pub async fn main_async(
 
             // Sleep the main thread to limit drawing to the fixed time step.
             // See: https://github.com/parasyte/pixels/issues/174
-            #[cfg(not(feature = "wasm"))]
+            #[cfg(not(target_arch = "wasm32"))]
             {
                 let dt = TIME_STEP.as_secs_f64() - Time::now().sub(&g.current_instant());
                 if dt > 0.0 {
