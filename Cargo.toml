@@ -14,28 +14,55 @@ type-mapper = "0.1.2"
 bytemuck = { version = "1.24", features = ["derive"] }
 paste = "1"
 #i8051 = { path = "../i8051/crates/i8051" }
-#i8051-debug-tui = { path = "../i8051/crates/i8051-debug-tui" }
+#i8051-debug-tui = { path = "../i8051/crates/i8051-debug-tui", optional = true }
 i8051 = { version = "0.10.0" }
-i8051-debug-tui = { version = "0.10.0" }
+i8051-debug-tui = { version = "0.10.0", optional = true }
 tracing = "0.1.41"
 tracing-subscriber = "0.3.20"
-ratatui = "0.29.0"
 hex-literal = "1.1"
-pty-process = "0.5"
 bit-set = "0.8"
 libc = "0.2.177"
+
+pty-process = { version = "0.5", optional = true }
+
+ratatui = { version = "0.29.0", optional = true }
 
 pixels = { git = "https://github.com/parasyte/pixels.git", features = [], optional = true }
 game-loop = { version = "=1.1.0", features = ["winit"], optional = true }
 winit_input_helper = { version = "=0.15", optional = true }
+pollster = { version = "0.4.0", optional = true }
+
+cargo-run-wasm = { version = "0.4.0", optional = true }
+console_error_panic_hook = { version = "0.1.7", optional = true }
+tracing-wasm = { version = "0.2.1", optional = true }
+wasm-bindgen = { version = "0.2.105", optional = true }
+wasm-bindgen-futures = { version = "0.4.46", optional = true }
+web-sys = { version = "0.3.82", optional = true, features = ["GpuTextureFormat", "Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement", "Event", "CssStyleDeclaration", "Navigator", "Gpu"] }
+js-sys = { version = "0.3.82", optional = true, features = [] }
 
 [dev-dependencies]
 tempfile = "3.23"
 
+[profile.release]
+debug = true
+
 [features]
-default = ["graphics"]
+default = ["graphics", "tui", "pty"]
 pc-trace = []
-graphics = ["dep:pixels", "dep:game-loop", "dep:winit_input_helper"]
+pty = ["dep:pty-process"]
+tui = ["dep:ratatui", "dep:i8051-debug-tui"]
+graphics = ["dep:pixels", "dep:game-loop", "dep:winit_input_helper", "dep:pollster"]
+wasm = [
+    "dep:cargo-run-wasm", "dep:console_error_panic_hook", 
+    "dep:tracing-wasm", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", 
+    "dep:web-sys", "dep:js-sys",
+    "graphics", "embed-rom",
+]
+embed-rom = []
 
 [[example]]
 name = "disassemble-rom"
+
+[[example]]
+name = "run-wasm"
+required-features = ["wasm"]

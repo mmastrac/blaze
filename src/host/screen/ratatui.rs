@@ -274,7 +274,7 @@ pub fn run(
     debugger: Option<Debugger>,
     show_mapper: bool,
     show_vram: bool,
-) -> Result<usize, Box<dyn std::error::Error>> {
+) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
     crossterm::terminal::enable_raw_mode()?;
     crossterm::execute!(io::stdout(), crossterm::terminal::EnterAlternateScreen,)?;
     crossterm::execute!(
@@ -293,9 +293,9 @@ fn run_inner(
     mut system: System,
     mut cpu: Cpu,
     debugger: Option<Debugger>,
-    mut show_mapper: bool,
-    mut show_vram: bool,
-) -> Result<usize, Box<dyn std::error::Error>> {
+    show_mapper: bool,
+    show_vram: bool,
+) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
     let mut running = true;
     let mut hex = DisplayMode::Normal;
     let mut pc_trace = false;

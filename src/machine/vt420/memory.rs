@@ -184,8 +184,8 @@ impl PortMapper for DiagnosticMonitor {
 }
 
 pub struct RAM {
-    pub sram: [u8; 0x8000],  // 32kB
-    pub vram: [u8; 0x20000], // 128kB
+    pub sram: Box<[u8; 0x8000]>,  // 32kB
+    pub vram: Box<[u8; 0x20000]>, // 128kB
     pub mapper: Mapper,
     pub peripheral: [u8; 0x100],
     pub rom_bank: Rc<Cell<bool>>,
@@ -197,8 +197,8 @@ pub struct RAM {
 
 impl RAM {
     pub fn new(rom_bank: Rc<Cell<bool>>, sync: SyncHolder, duart: DUART) -> Self {
-        let sram = [0; 0x8000];
-        let vram = [0; 0x20000];
+        let sram = Box::new([0; 0x8000]);
+        let vram = Box::new([0; 0x20000]);
         let mapper = Mapper::new();
         let peripheral = [0; 0x100];
         Self {
@@ -293,7 +293,7 @@ impl MemoryMapper for RAM {
                     if tracing::enabled!(tracing::Level::TRACE) {
                         debug!("VIDEO VRAM addr = {:02X?}", &self.vram[0..60]);
                     }
-                    self.mapper.read_7ff6(&self.vram)
+                    self.mapper.read_7ff6(self.vram.as_ref())
                 }
                 x => self.mapper.get(x as _),
             },
@@ -356,10 +356,10 @@ impl MemoryMapper for RAM {
                     let old = self.mapper.vram_8000_bit();
                     let new = self.mapper.vram_8000_bit_value(value);
                     debug!("VIDEO: VRAM page changed: {} -> {}", old, new);
-                    if old == 1 && new == 0 {
-                        let font = &self.vram[0..];
-                        std::fs::write("/tmp/font.bin", font).unwrap();
-                    }
+                    // if old == 1 && new == 0 {
+                    //     let font = &self.vram[0..];
+                    //     std::fs::write("/tmp/font.bin", font).unwrap();
+                    // }
                 }
 
                 if offset == 0x5 {
@@ -414,24 +414,21 @@ pub struct ROM {
     rom_size: usize,
     /// Bank size (64KB per bank)
     bank_size: usize,
-    rom_bank: Rc<Cell<bool>>,
 }
 
 impl ROM {
     /// Create a new memory mapper with ROM loaded from file
     /// Bank 0: first 64KB of ROM, Bank 1: remaining ROM data
     /// Initializes with bank 0 mapped
-    pub fn new(rom_path: &Path, rom_bank: Rc<Cell<bool>>) -> io::Result<Self> {
-        let rom = fs::read(rom_path)?;
+    pub fn new(rom: Vec<u8>) -> Self {
         let rom_size = rom.len();
         let bank_size = 0x10000; // 64KB per bank
 
-        Ok(Self {
+        Self {
             rom,
             rom_size,
-            rom_bank,
             bank_size,
-        })
+        }
     }
 
     pub fn banks(&self) -> impl Iterator<Item = &[u8]> {

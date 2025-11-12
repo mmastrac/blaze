@@ -7,6 +7,7 @@ use std::fs;
 use std::mem;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+#[cfg(not(feature = "wasm"))]
 use std::time::{Duration, Instant};
 
 use hex_literal::hex;
@@ -19,7 +20,6 @@ use tracing::{info, trace, warn};
 use crate::host::comm::{self, CommConfig};
 use crate::machine::generic::duart::DUART;
 use crate::machine::generic::lk201::LK201;
-use crate::machine::vt420::video::decode_vram;
 
 use self::memory::{Bank, DiagnosticMonitor, RAM, ROM, VideoProcessor};
 
@@ -53,24 +53,30 @@ pub(crate) struct System {
 
 impl System {
     pub(crate) fn new(
-        rom: &Path,
+        rom: Vec<u8>,
         nvr: Option<&Path>,
         comm1: CommConfig,
         comm2: CommConfig,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let bank = Bank::default();
         info!("Loading ROM into memory...");
-        let rom = ROM::new(&rom, bank.bank.clone())?;
-        let video_row = VideoProcessor::new();
-        let (serial, in_kbd, out_kbd) = Serial::new(60);
-        let (duart, channel_a, channel_b) = DUART::new();
+        let rom = ROM::new(rom);
 
+        info!("Configuring video processor...");
+        let video_row = VideoProcessor::new();
+        info!("Configuring keyboard...");
+        let (serial, in_kbd, out_kbd) = Serial::new(60);
+
+        info!("Configuring UARTs...");
+        let (duart, channel_a, channel_b) = DUART::new();
         let dtr_a = comm::connect_duart(channel_a, comm1)?;
         let dtr_b = comm::connect_duart(channel_b, comm2)?;
 
         let mut memory = RAM::new(bank.bank.clone(), video_row.sync.clone(), duart);
         let mut nvr_file = None;
+        info!("Configuring NVR...");
         if let Some(nvr) = nvr {
+            info!("Using NVR file: {:?}", nvr);
             nvr_file = Some(nvr.to_owned());
             if !nvr.exists() {
                 warn!("NVR file does not exist, creating it");
@@ -86,6 +92,7 @@ impl System {
             }
             memory.nvr.mem.copy_from_slice(&nvr);
         } else {
+            info!("No NVR file provided, using default");
             // Some checksums hand-modified (0x30, 0x50, 0x70) for tests to pass
             let initial_nvr = hex!(
                 "65 44 88 1e 1e 85 54 88  85 54 00 00 04 50 00 00"
@@ -101,6 +108,7 @@ impl System {
             memory.nvr.mem.fill(0xff);
             memory.nvr.mem[..initial_nvr.len()].copy_from_slice(&initial_nvr);
         }
+
         Ok(Self {
             instruction_count: 0,
             bank,
@@ -126,6 +134,7 @@ impl System {
 
     pub(crate) fn step(&mut self, cpu: &mut Cpu) {
         self.instruction_count += 1;
+        #[cfg(not(feature = "wasm"))]
         let start = Instant::now();
         let mut breakpoints = Breakpoints::default();
         mem::swap(&mut self.breakpoints, &mut breakpoints);
@@ -182,15 +191,19 @@ impl System {
         mem::swap(&mut self.breakpoints, &mut breakpoints);
         breakpoints.run(false, cpu, self);
         mem::swap(&mut self.breakpoints, &mut breakpoints);
+        #[cfg(not(feature = "wasm"))]
         if start.elapsed() > Duration::from_millis(100) {
             warn!("Step took too long: {:?}", start.elapsed());
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn dump_screen_text(&self) -> String {
+        use crate::machine::vt420::video::decode_vram;
+
         let text = String::with_capacity(132 * 25);
         decode_vram(
-            &self.memory.vram,
+            self.memory.vram.as_ref(),
             &self.memory.mapper,
             |text, _, _, _| {
                 text.push_str("\n");
@@ -316,13 +329,9 @@ mod tests {
     #[test]
     fn test_boots() {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        let mut system = System::new(
-            &Path::new(&format!("{}/roms/vt420/23-068E9-00.bin", manifest_dir)),
-            None,
-            CommConfig::default(),
-            CommConfig::default(),
-        )
-        .unwrap();
+        let rom = fs::read(&format!("{}/roms/vt420/23-068E9-00.bin", manifest_dir)).unwrap();
+        let mut system =
+            System::new(rom, None, CommConfig::default(), CommConfig::default()).unwrap();
 
         system.keyboard.start_collecting_commands();
 

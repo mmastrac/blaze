@@ -1,8 +1,8 @@
 use std::cell::Cell;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
-use std::os::fd::OwnedFd;
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -24,6 +24,9 @@ pub enum CommConfig {
     Pipes { rx: PathBuf, tx: PathBuf },
     /// Execute a command and connect to its pty
     Exec(String),
+    /// Execute a command and connect to its pty
+    #[cfg(feature = "pty")]
+    ExecPty(String),
 }
 
 impl CommConfig {
@@ -32,7 +35,13 @@ impl CommConfig {
         pipe: Option<PathBuf>,
         pipes: Option<(PathBuf, PathBuf)>,
         exec: Option<String>,
+        exec_pty: Option<String>,
     ) -> Self {
+        #[cfg(feature = "pty")]
+        if let Some(exec_pty_cmd) = exec_pty {
+            return CommConfig::ExecPty(exec_pty_cmd);
+        }
+
         if let Some(exec_cmd) = exec {
             CommConfig::Exec(exec_cmd)
         } else if let Some((rx, tx)) = pipes {
@@ -50,11 +59,17 @@ pub fn connect_duart(
     channel: DUARTChannel,
     config: CommConfig,
 ) -> Result<Rc<Cell<bool>>, std::io::Error> {
+    if cfg!(feature = "wasm") {
+        return Ok(Rc::new(Cell::new(true)));
+    }
+
     match config {
         CommConfig::Loopback => connect_loopback(channel),
         CommConfig::Pipe(path) => connect_single_pipe(channel, path),
         CommConfig::Pipes { rx, tx } => connect_dual_pipes(channel, rx, tx),
         CommConfig::Exec(cmd) => connect_exec(channel, cmd),
+        #[cfg(feature = "pty")]
+        CommConfig::ExecPty(cmd) => connect_exec_pty(channel, cmd),
     }
 }
 
@@ -210,9 +225,89 @@ fn connect_exec(
     channel: DUARTChannel,
     cmd_string: String,
 ) -> Result<Rc<Cell<bool>>, std::io::Error> {
-    use pty_process::blocking::Command;
-
     info!("Connecting DUART to shell process {:?}", cmd_string);
+    let software_flow_control = Arc::new(AtomicBool::new(true));
+    let rx = channel.rx;
+    let tx = channel.tx;
+
+    if cmd_string.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Empty command string",
+        ));
+    }
+
+    // Spawn command via shell
+    let mut child = std::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg(&cmd_string)
+        .stderr(Stdio::null())
+        .stdout(Stdio::piped())
+        .stdin(Stdio::piped())
+        .spawn()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+
+    let software_flow_control_clone = software_flow_control.clone();
+    thread::spawn(move || {
+        loop {
+            match rx.recv() {
+                Ok(b) => {
+                    if b == 0x11 {
+                        // XON
+                        trace!("DUART exec XON");
+                        software_flow_control_clone.store(true, Ordering::Relaxed);
+                    } else if b == 0x13 {
+                        // XOFF
+                        trace!("DUART exec XOFF");
+                        software_flow_control_clone.store(false, Ordering::Relaxed);
+                    } else {
+                        if !stdin.write_all(&[b]).is_ok() {
+                            break;
+                        }
+                    }
+                }
+                _ => break,
+            }
+        }
+        trace!("DUART write thread exited");
+    });
+
+    thread::spawn(move || {
+        loop {
+            if !software_flow_control.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(10));
+                continue;
+            }
+            let mut buf = [0; 1];
+            let read_result = { stdout.read(&mut buf) };
+            match read_result {
+                Ok(n) if n > 0 => {
+                    if !tx.send(buf[0]).is_ok() {
+                        break;
+                    }
+                }
+                Ok(_) => break, // EOF (read 0 bytes)
+                Err(_) => break,
+            }
+        }
+        trace!("DUART read thread exited");
+    });
+
+    Ok(channel.dtr)
+}
+
+#[cfg(feature = "pty")]
+fn connect_exec_pty(
+    channel: DUARTChannel,
+    cmd_string: String,
+) -> Result<Rc<Cell<bool>>, std::io::Error> {
+    use pty_process::blocking::Command;
+    use std::os::fd::OwnedFd;
+
+    info!("Connecting DUART to shell process PTY {:?}", cmd_string);
     let software_flow_control = Arc::new(AtomicBool::new(true));
     let rx = channel.rx;
     let tx = channel.tx;

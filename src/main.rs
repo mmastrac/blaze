@@ -1,25 +1,29 @@
 use clap::Parser;
+#[cfg(feature = "tui")]
 use i8051_debug_tui::{Debugger, TracingCollector};
 use std::path::PathBuf;
+use tracing::{Level, error, info};
+
+#[cfg(not(feature = "wasm"))]
 use std::time::Instant;
-use tracing::{Level, info};
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
 
 mod host;
 mod machine;
 
-use machine::vt420::{System, breakpoints::create_breakpoints};
+use machine::vt420::System;
+use machine::vt420::breakpoints::create_breakpoints;
 
 use i8051::Cpu;
 
 use crate::host::comm::CommConfig;
 
-#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 enum Display {
     /// No display. Runs the emulator in headless mode.
+    #[default]
     Headless,
     /// Display the video output in a text-based UI.
+    #[cfg(feature = "tui")]
     Text,
     /// Display the video output in a graphical UI.
     #[cfg(feature = "graphics")]
@@ -28,12 +32,13 @@ enum Display {
 
 /// VT420 Terminal Emulator
 /// Emulates a VT420 terminal using an 8051 microcontroller
-#[derive(Parser)]
+#[derive(Default, Parser)]
 #[command(name = "vt-emulator")]
 #[command(about = "A VT420 terminal emulator using 8051 CPU emulation")]
 struct Args {
     /// Path to the ROM file
     #[arg(long)]
+    #[cfg(not(feature = "embed-rom"))]
     rom: PathBuf,
 
     /// Path to the non-volatile RAM file
@@ -52,6 +57,10 @@ struct Args {
     #[arg(long = "comm1-pipes", num_args = 2, value_names = ["RX", "TX"])]
     comm1_pipes: Vec<PathBuf>,
 
+    /// Comm1: Execute a command and connect to its stdin/stdout
+    #[arg(long = "comm1-exec-raw", value_name = "COMMAND")]
+    comm1_exec_raw: Option<String>,
+
     /// Comm1: Execute a command and connect to its pty
     #[arg(long = "comm1-exec", value_name = "COMMAND")]
     comm1_exec: Option<String>,
@@ -63,6 +72,10 @@ struct Args {
     /// Comm2: Separate read and write pipes
     #[arg(long = "comm2-pipes", num_args = 2, value_names = ["RX", "TX"])]
     comm2_pipes: Vec<PathBuf>,
+
+    /// Comm2: Execute a command and connect to its stdin/stdout
+    #[arg(long = "comm2-exec-raw", value_name = "COMMAND")]
+    comm2_exec_raw: Option<String>,
 
     /// Comm2: Execute a command and connect to its pty
     #[arg(long = "comm2-exec", value_name = "COMMAND")]
@@ -97,43 +110,95 @@ fn parse_hex_address(s: &str) -> Result<u32, Box<dyn std::error::Error + Send + 
     Ok(u32::from_str_radix(s, 16)?)
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = Args::parse();
-
+fn setup_logging(args: &Args, #[cfg(feature = "tui")] trace_collector: TracingCollector) {
     let level = if args.verbose {
         Level::TRACE
     } else {
         Level::INFO
     };
 
-    let trace_collector = TracingCollector::new(1000);
+    #[cfg(feature = "tui")]
     if args.debug {
         host::logging::setup_logging_debugger(level, trace_collector.clone());
-    } else {
-        match args.display {
-            Display::Headless => {
-                host::logging::setup_logging_stdio(level);
-            }
-            #[cfg(feature = "graphics")]
-            Display::Graphics => {
-                host::logging::setup_logging_stdio(level);
-            }
-            Display::Text => {
-                if args.log {
-                    host::logging::setup_logging_file(level);
-                }
+        return;
+    }
+
+    match args.display {
+        Display::Headless => {
+            host::logging::setup_logging_stdio(level);
+        }
+        #[cfg(feature = "graphics")]
+        Display::Graphics => {
+            host::logging::setup_logging_stdio(level);
+        }
+        #[cfg(feature = "tui")]
+        Display::Text => {
+            if args.log {
+                host::logging::setup_logging_file(level);
             }
         }
     }
+}
 
-    info!("VT420 Emulator starting...");
-    info!("ROM file: {:?}", args.rom);
+#[cfg(feature = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+fn start() {
+    console_error_panic_hook::set_once();
+    let mut config = tracing_wasm::WASMLayerConfigBuilder::new();
+    config.set_max_level(Level::INFO);
+    tracing_wasm::set_as_global_default_with_config(config.build());
 
-    // Check if ROM file exists
-    if !args.rom.exists() {
-        info!("Error: ROM file does not exist: {:?}", args.rom);
-        std::process::exit(1);
+    if let Err(e) = run(
+        Args {
+            display: Display::Graphics,
+            ..Default::default()
+        },
+        #[cfg(feature = "tui")]
+        TracingCollector::new(1000),
+    ) {
+        error!("Error: {}", e);
     }
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let args = Args::parse();
+
+    #[cfg(feature = "tui")]
+    let trace_collector = TracingCollector::new(1000);
+    setup_logging(
+        &args,
+        #[cfg(feature = "tui")]
+        trace_collector.clone(),
+    );
+
+    run(
+        args,
+        #[cfg(feature = "tui")]
+        trace_collector,
+    )
+}
+
+fn run(
+    args: Args,
+    #[cfg(feature = "tui")] trace_collector: TracingCollector,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    info!("VT420 Emulator starting...");
+
+    #[cfg(feature = "embed-rom")]
+    let rom = { include_bytes!("../roms/vt420/23-068E9-00.bin").to_vec() };
+    #[cfg(not(feature = "embed-rom"))]
+    let rom = {
+        use std::fs;
+        info!("Loading ROM file: {:?}...", args.rom);
+
+        // Check if ROM file exists
+        if !args.rom.exists() {
+            info!("Error: ROM file does not exist: {:?}", args.rom);
+            std::process::exit(1);
+        }
+
+        fs::read(&args.rom)?
+    };
 
     info!("Configuring system...");
 
@@ -143,7 +208,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
-    let comm1_config = CommConfig::from_args(args.comm1_pipe, comm1_pipes, args.comm1_exec);
+    let comm1_config = CommConfig::from_args(
+        args.comm1_pipe,
+        comm1_pipes,
+        args.comm1_exec_raw,
+        args.comm1_exec,
+    );
 
     // Parse comm2 configuration
     let comm2_pipes = if args.comm2_pipes.len() == 2 {
@@ -151,10 +221,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
-    let comm2_config = CommConfig::from_args(args.comm2_pipe, comm2_pipes, args.comm2_exec);
+    let comm2_config = CommConfig::from_args(
+        args.comm2_pipe,
+        comm2_pipes,
+        args.comm2_exec_raw,
+        args.comm2_exec,
+    );
 
-    let mut system =
-        System::new(&args.rom, args.nvr.as_deref(), comm1_config, comm2_config).unwrap();
+    let mut system = System::new(rom, args.nvr.as_deref(), comm1_config, comm2_config)?;
 
     let breakpoints = &mut system.breakpoints;
     if args.log {
@@ -163,9 +237,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Starting CPU execution...");
     let cpu = Cpu::new();
+    #[cfg(not(feature = "wasm"))]
     let start_time = Instant::now();
     info!("CPU initialized, PC = 0x{:04X}", cpu.pc_ext(&system));
 
+    #[cfg(feature = "tui")]
     let debugger = if args.debug {
         let mut debugger = Debugger::new(Default::default(), trace_collector)?;
         for breakpoint in args.breakpoint {
@@ -177,18 +253,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let instruction_count = match args.display {
-        Display::Headless => host::screen::headless::run(system, cpu, debugger)?,
+        Display::Headless => host::screen::headless::run(
+            system,
+            cpu,
+            #[cfg(feature = "tui")]
+            debugger,
+        )?,
+        #[cfg(feature = "tui")]
         Display::Text => {
             host::screen::ratatui::run(system, cpu, debugger, args.show_mapper, args.show_vram)?
         }
         #[cfg(feature = "graphics")]
-        Display::Graphics => host::screen::wgpu::run(system, cpu, debugger)?,
+        Display::Graphics => host::screen::wgpu::run(
+            system,
+            cpu,
+            #[cfg(feature = "tui")]
+            debugger,
+        )?,
     };
 
+    #[cfg(not(feature = "wasm"))]
     let elapsed = start_time.elapsed();
     info!("CPU execution completed:");
     info!("  Instructions executed: {}", instruction_count);
+    #[cfg(not(feature = "wasm"))]
     info!("  Time elapsed: {:?}", elapsed);
+    #[cfg(not(feature = "wasm"))]
     if elapsed.as_secs_f64() > 0.0 {
         info!(
             "  Instructions per second: {:.0}",

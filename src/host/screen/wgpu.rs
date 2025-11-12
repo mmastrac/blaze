@@ -1,10 +1,11 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use i8051::Cpu;
+#[cfg(feature = "tui")]
 use i8051_debug_tui::{Debugger, DebuggerState};
+#[cfg(feature = "tui")]
 use ratatui::crossterm;
 
 use crate::{
@@ -108,7 +109,7 @@ impl WgpuRender {
                     font_address_base += 16;
                 }
                 decode_font(
-                    &system.memory.vram,
+                    system.memory.vram.as_ref(),
                     font_address_base as _,
                     render.is_80,
                     &mut font,
@@ -167,8 +168,9 @@ impl WgpuRender {
 pub fn run(
     system: System,
     mut cpu: Cpu,
-    debugger: Option<Debugger>,
-) -> Result<usize, Box<dyn std::error::Error>> {
+    #[cfg(feature = "tui")] debugger: Option<Debugger>,
+) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+    #[cfg(feature = "tui")]
     if let Some(debugger) = debugger {
         return run_debugger(system, cpu, debugger);
     }
@@ -190,16 +192,18 @@ pub fn run(
         sender,
         move |frame| render.render(&system_clone.borrow(), frame),
         stepper,
-    )?;
+    )
+    .map_err(|e| format!("Graphics error: {}", e))?;
 
     return Ok(system.borrow().instruction_count);
 }
 
+#[cfg(feature = "tui")]
 fn run_debugger(
     system: System,
     mut cpu: Cpu,
     mut debugger: Debugger,
-) -> Result<usize, Box<dyn std::error::Error>> {
+) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
     debugger.enter()?;
 
     let sender = system.keyboard.sender();

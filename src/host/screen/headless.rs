@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use i8051::Cpu;
+#[cfg(feature = "tui")]
 use i8051_debug_tui::Debugger;
 
 use crate::System;
@@ -8,10 +9,11 @@ use crate::System;
 pub fn run(
     mut system: System,
     mut cpu: Cpu,
-    debugger: Option<Debugger>,
-) -> Result<usize, Box<dyn std::error::Error>> {
-    use i8051_debug_tui::{DebuggerState, crossterm};
+    #[cfg(feature = "tui")] debugger: Option<Debugger>,
+) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+    #[cfg(feature = "tui")]
     if let Some(mut debugger) = debugger {
+        use i8051_debug_tui::{DebuggerState, crossterm};
         debugger.enter()?;
         loop {
             match debugger.debugger_state() {
@@ -48,10 +50,11 @@ pub fn run(
                 }
             }
         }
-    } else {
-        loop {
-            system.step(&mut cpu);
-        }
+        return Ok(system.instruction_count);
+    }
+
+    loop {
+        system.step(&mut cpu);
     }
     Ok(system.instruction_count)
 }

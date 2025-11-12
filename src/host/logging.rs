@@ -38,6 +38,7 @@ pub fn setup_logging_stdio(level: tracing::Level) {
         .init();
 }
 
+#[cfg(feature = "tui")]
 pub fn setup_logging_debugger(
     level: tracing::Level,
     trace_collector: i8051_debug_tui::TracingCollector,
