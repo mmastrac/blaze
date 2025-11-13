@@ -13,11 +13,14 @@ use tracing::{debug, error, info, trace};
 use crate::machine::generic::duart::DUARTChannel;
 
 /// Communication configuration for a DUART channel
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum CommConfig {
     /// Loopback mode (no external connection)
     #[default]
     Loopback,
+    /// Demo mode (use demo UI)
+    #[cfg(feature = "demo")]
+    Demo,
     /// Single bidirectional pipe
     Pipe(PathBuf),
     /// Separate read and write pipes
@@ -36,6 +39,7 @@ impl CommConfig {
         pipes: Option<(PathBuf, PathBuf)>,
         exec: Option<String>,
         exec_pty: Option<String>,
+        loopback: bool,
     ) -> Self {
         #[cfg(feature = "pty")]
         if let Some(exec_pty_cmd) = exec_pty {
@@ -48,6 +52,10 @@ impl CommConfig {
             CommConfig::Pipes { rx, tx }
         } else if let Some(pipe) = pipe {
             CommConfig::Pipe(pipe)
+        } else if loopback {
+            CommConfig::Loopback
+        } else if cfg!(feature = "demo") {
+            CommConfig::Demo
         } else {
             CommConfig::Loopback
         }
@@ -70,6 +78,8 @@ pub fn connect_duart(
         CommConfig::Exec(cmd) => connect_exec(channel, cmd),
         #[cfg(feature = "pty")]
         CommConfig::ExecPty(cmd) => connect_exec_pty(channel, cmd),
+        #[cfg(feature = "demo")]
+        CommConfig::Demo => connect_loopback(channel),
     }
 }
 

@@ -15,24 +15,30 @@ bytemuck = { version = "1.24", features = ["derive"] }
 paste = "1"
 #i8051 = { path = "../i8051/crates/i8051" }
 #i8051-debug-tui = { path = "../i8051/crates/i8051-debug-tui", optional = true }
-i8051 = { version = "0.10.0" }
-i8051-debug-tui = { version = "0.10.0", optional = true }
+i8051 = { version = "0.12.0" }
+i8051-debug-tui = { version = "0.12.0", optional = true }
 tracing = "0.1.41"
 tracing-subscriber = "0.3.20"
 hex-literal = "1.1"
 bit-set = "0.8"
 libc = "0.2.177"
 
+# features=pty
 pty-process = { version = "0.5", optional = true }
 
-ratatui = { version = "0.29.0", optional = true }
+# features=tui
+ratatui = { version = "0.30.0-beta.0", optional = true }
 
+# features=graphics
 pixels = { git = "https://github.com/parasyte/pixels.git", features = [], optional = true }
 game-loop = { version = "=1.1.0", features = ["winit"], optional = true }
 winit_input_helper = { version = "=0.15", optional = true }
 pollster = { version = "0.4.0", optional = true }
 
+# features=run-wasm
 cargo-run-wasm = { version = "0.4.0", optional = true }
+
+vt-push-parser = { version = "0.11.0", optional = true }
 
 [dev-dependencies]
 tempfile = "3.23"
@@ -41,7 +47,7 @@ tempfile = "3.23"
 debug = true
 
 [features]
-default = ["graphics", "tui", "pty"]
+default = ["graphics", "tui", "pty", "demo"]
 wasm = ["graphics", "embed-rom"]
 pc-trace = []
 pty = ["dep:pty-process"]
@@ -49,6 +55,7 @@ tui = ["dep:ratatui", "dep:i8051-debug-tui"]
 graphics = ["dep:pixels", "dep:game-loop", "dep:winit_input_helper", "dep:pollster"]
 embed-rom = []
 run-wasm = ["dep:cargo-run-wasm"]
+demo = ["dep:vt-push-parser", "dep:ratatui", "ratatui/termion"]
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = { version = "0.1.7" }

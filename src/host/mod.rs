@@ -1,4 +1,6 @@
 pub mod comm;
+#[cfg(feature = "demo")]
+pub mod demo_comm;
 pub mod lk201;
 pub mod logging;
 pub mod screen;

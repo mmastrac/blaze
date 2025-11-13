@@ -2,7 +2,7 @@ use clap::Parser;
 #[cfg(feature = "tui")]
 use i8051_debug_tui::{Debugger, TracingCollector};
 use std::path::PathBuf;
-use tracing::{Level, error, info};
+use tracing::{Level, info};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
@@ -50,36 +50,44 @@ struct Args {
     display: Display,
 
     /// Comm1: Single bidirectional pipe
-    #[arg(long = "comm1-pipe", value_name = "PIPE")]
+    #[arg(long = "comm1-pipe", value_name = "PIPE", group = "comm1")]
     comm1_pipe: Option<PathBuf>,
 
     /// Comm1: Separate read and write pipes
-    #[arg(long = "comm1-pipes", num_args = 2, value_names = ["RX", "TX"])]
+    #[arg(long = "comm1-pipes", num_args = 2, value_names = ["RX", "TX"], group = "comm1")]
     comm1_pipes: Vec<PathBuf>,
 
     /// Comm1: Execute a command and connect to its stdin/stdout
-    #[arg(long = "comm1-exec-raw", value_name = "COMMAND")]
+    #[arg(long = "comm1-exec-raw", value_name = "COMMAND", group = "comm1")]
     comm1_exec_raw: Option<String>,
 
     /// Comm1: Execute a command and connect to its pty
-    #[arg(long = "comm1-exec", value_name = "COMMAND")]
+    #[arg(long = "comm1-exec", value_name = "COMMAND", group = "comm1")]
     comm1_exec: Option<String>,
 
+    /// Comm1: Use loopback mode
+    #[arg(long = "comm1-loopback", group = "comm1")]
+    comm1_loopback: bool,
+
     /// Comm2: Single bidirectional pipe
-    #[arg(long = "comm2-pipe", value_name = "PIPE")]
+    #[arg(long = "comm2-pipe", value_name = "PIPE", group = "comm2")]
     comm2_pipe: Option<PathBuf>,
 
     /// Comm2: Separate read and write pipes
-    #[arg(long = "comm2-pipes", num_args = 2, value_names = ["RX", "TX"])]
+    #[arg(long = "comm2-pipes", num_args = 2, value_names = ["RX", "TX"], group = "comm2")]
     comm2_pipes: Vec<PathBuf>,
 
     /// Comm2: Execute a command and connect to its stdin/stdout
-    #[arg(long = "comm2-exec-raw", value_name = "COMMAND")]
+    #[arg(long = "comm2-exec-raw", value_name = "COMMAND", group = "comm2")]
     comm2_exec_raw: Option<String>,
 
     /// Comm2: Execute a command and connect to its pty
-    #[arg(long = "comm2-exec", value_name = "COMMAND")]
+    #[arg(long = "comm2-exec", value_name = "COMMAND", group = "comm2")]
     comm2_exec: Option<String>,
+
+    /// Comm2: Use loopback mode
+    #[arg(long = "comm2-loopback", group = "comm2")]
+    comm2_loopback: bool,
 
     /// Display the video RAM
     #[arg(long, requires = "display")]
@@ -213,6 +221,7 @@ fn run(
         comm1_pipes,
         args.comm1_exec_raw,
         args.comm1_exec,
+        args.comm1_loopback,
     );
 
     // Parse comm2 configuration
@@ -226,6 +235,7 @@ fn run(
         comm2_pipes,
         args.comm2_exec_raw,
         args.comm2_exec,
+        args.comm2_loopback,
     );
 
     let mut system = System::new(rom, args.nvr.as_deref(), comm1_config, comm2_config)?;
@@ -274,19 +284,19 @@ fn run(
 
     #[cfg(not(target_arch = "wasm32"))]
     let elapsed = start_time.elapsed();
-    info!("CPU execution completed:");
-    info!("  Instructions executed: {}", instruction_count);
+    println!("CPU execution completed:");
+    println!("  Instructions executed: {}", instruction_count);
     #[cfg(not(target_arch = "wasm32"))]
-    info!("  Time elapsed: {:?}", elapsed);
+    println!("  Time elapsed: {:?}", elapsed);
     #[cfg(not(target_arch = "wasm32"))]
     if elapsed.as_secs_f64() > 0.0 {
-        info!(
+        println!(
             "  Instructions per second: {:.0}",
             instruction_count as f64 / elapsed.as_secs_f64()
         );
     }
 
-    info!("VT420 emulator execution completed!");
+    println!("VT420 emulator execution completed!");
 
     Ok(())
 }

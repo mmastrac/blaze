@@ -42,6 +42,9 @@ pub(crate) struct System {
     dtr_a: Rc<Cell<bool>>,
     dtr_b: Rc<Cell<bool>>,
 
+    #[cfg(feature = "demo")]
+    pub(crate) demo_comm: Option<crate::host::demo_comm::DemoComm>,
+
     pub(crate) keyboard: LK201,
     pub(crate) breakpoints: Breakpoints,
 
@@ -69,7 +72,23 @@ impl System {
 
         info!("Configuring UARTs...");
         let (duart, channel_a, channel_b) = DUART::new();
+
+        #[cfg(feature = "demo")]
+        let (demo_comm, dtr_a) = if comm1 == CommConfig::Demo {
+            (
+                Some(crate::host::demo_comm::DemoComm::new(
+                    channel_a.tx,
+                    channel_a.rx,
+                )),
+                Rc::new(Cell::new(true)),
+            )
+        } else {
+            (None, comm::connect_duart(channel_a, comm1)?)
+        };
+
+        #[cfg(not(feature = "demo"))]
         let dtr_a = comm::connect_duart(channel_a, comm1)?;
+
         let dtr_b = comm::connect_duart(channel_b, comm2)?;
 
         let mut memory = RAM::new(bank.bank.clone(), video_row.sync.clone(), duart);
@@ -120,6 +139,8 @@ impl System {
             serial,
             dtr_a,
             dtr_b,
+            #[cfg(feature = "demo")]
+            demo_comm,
             diagnostic_monitor: DiagnosticMonitor::default(),
             timer: Timer::default(),
             default: DefaultPortMapper::default(),
@@ -168,6 +189,10 @@ impl System {
             }
         } else if prev_p3 & P3_INT1 != 0 {
             trace!("DUART interrupt");
+        }
+        #[cfg(feature = "demo")]
+        if let Some(demo_comm) = &mut self.demo_comm {
+            demo_comm.tick();
         }
         let dtr_a = self.memory.duart.output_bits_inv & (1 << 1) != 0;
         let dtr_b = self.memory.duart.output_bits_inv & (1 << 7) != 0;
