@@ -25,6 +25,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.88.0
+      - name: Install WASM target
+        run: rustup target add wasm32-unknown-unknown
       - name: Build WASM
         run: cargo run-wasm --bin blaze-vt --no-default-features --features=wasm,demo --release --build-only
       - name: List WASM files
