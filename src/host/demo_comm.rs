@@ -7,7 +7,7 @@ use ratatui::{
     style::{Style, Stylize},
     symbols::border,
     text::{Line, Span},
-    widgets::{Block, List, ListDirection, ListState, Padding, Paragraph, TitlePosition, Wrap},
+    widgets::{Block, List, ListDirection, ListState, Padding, Paragraph, Wrap},
 };
 use tracing::trace;
 
@@ -36,10 +36,25 @@ const PAGE_MENU_ITEMS: [&str; 11] = [
     "Page size 72",
 ];
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct Pending {
     pending: Rc<RefCell<VecDeque<u8>>>,
     size: Rc<RefCell<Size>>,
+    cursor_pos: Rc<RefCell<Position>>,
+    current_style: Rc<RefCell<ratatui::style::Style>>,
+    cursor_visible: Rc<RefCell<bool>>,
+}
+
+impl Default for Pending {
+    fn default() -> Self {
+        Self {
+            pending: Rc::new(RefCell::new(VecDeque::new())),
+            size: Rc::new(RefCell::new(Size::new(80, 24))),
+            cursor_pos: Rc::new(RefCell::new(Position::new(0, 0))),
+            current_style: Rc::new(RefCell::new(ratatui::style::Style::default())),
+            cursor_visible: Rc::new(RefCell::new(true)),
+        }
+    }
 }
 
 impl io::Write for Pending {
@@ -52,54 +67,260 @@ impl io::Write for Pending {
     }
 }
 
-struct BackendWrapper(ratatui::backend::TermionBackend<Pending>, Pending);
+impl Pending {
+    fn write_bytes(&self, bytes: &[u8]) {
+        self.pending.borrow_mut().extend(bytes);
+    }
 
-impl ratatui::backend::Backend for BackendWrapper {
+    fn write_str(&self, s: &str) {
+        self.pending.borrow_mut().extend(s.as_bytes());
+    }
+
+    fn write_csi(&self, params: &str, final_byte: u8) {
+        self.write_bytes(b"\x1b[");
+        self.write_str(params);
+        self.write_bytes(&[final_byte]);
+    }
+
+    fn set_cursor_pos(&self, x: u16, y: u16) {
+        let mut pos = self.cursor_pos.borrow_mut();
+        if pos.x != x || pos.y != y {
+            // VT420 uses 1-based indexing, and format is ESC [ row ; col H
+            self.write_csi(&format!("{};{}", y + 1, x + 1), b'H');
+            pos.x = x;
+            pos.y = y;
+        }
+    }
+
+    fn apply_style(&self, style: &ratatui::style::Style) {
+        let mut current = self.current_style.borrow_mut();
+        if *current == *style {
+            return;
+        }
+
+        // Build SGR (Select Graphic Rendition) sequence
+        let mut codes = Vec::new();
+
+        // Reset first
+        codes.push(0);
+
+        // Text modifiers
+        if style.add_modifier.contains(ratatui::style::Modifier::BOLD) {
+            codes.push(1);
+        }
+        if style.add_modifier.contains(ratatui::style::Modifier::DIM) {
+            codes.push(2);
+        }
+        if style
+            .add_modifier
+            .contains(ratatui::style::Modifier::ITALIC)
+        {
+            codes.push(3);
+        }
+        if style
+            .add_modifier
+            .contains(ratatui::style::Modifier::UNDERLINED)
+        {
+            codes.push(4);
+        }
+        if style
+            .add_modifier
+            .contains(ratatui::style::Modifier::SLOW_BLINK)
+        {
+            codes.push(5);
+        }
+        if style
+            .add_modifier
+            .contains(ratatui::style::Modifier::RAPID_BLINK)
+        {
+            codes.push(6);
+        }
+        if style
+            .add_modifier
+            .contains(ratatui::style::Modifier::REVERSED)
+        {
+            codes.push(7);
+        }
+        if style
+            .add_modifier
+            .contains(ratatui::style::Modifier::HIDDEN)
+        {
+            codes.push(8);
+        }
+        if style
+            .add_modifier
+            .contains(ratatui::style::Modifier::CROSSED_OUT)
+        {
+            codes.push(9);
+        }
+
+        // Remove modifiers
+        if style.sub_modifier.contains(ratatui::style::Modifier::BOLD) {
+            codes.push(22);
+        }
+        if style.sub_modifier.contains(ratatui::style::Modifier::DIM) {
+            codes.push(22);
+        }
+        if style
+            .sub_modifier
+            .contains(ratatui::style::Modifier::ITALIC)
+        {
+            codes.push(23);
+        }
+        if style
+            .sub_modifier
+            .contains(ratatui::style::Modifier::UNDERLINED)
+        {
+            codes.push(24);
+        }
+        if style
+            .sub_modifier
+            .contains(ratatui::style::Modifier::SLOW_BLINK)
+        {
+            codes.push(25);
+        }
+        if style
+            .sub_modifier
+            .contains(ratatui::style::Modifier::RAPID_BLINK)
+        {
+            codes.push(25);
+        }
+        if style
+            .sub_modifier
+            .contains(ratatui::style::Modifier::REVERSED)
+        {
+            codes.push(27);
+        }
+        if style
+            .sub_modifier
+            .contains(ratatui::style::Modifier::HIDDEN)
+        {
+            codes.push(28);
+        }
+        if style
+            .sub_modifier
+            .contains(ratatui::style::Modifier::CROSSED_OUT)
+        {
+            codes.push(29);
+        }
+
+        // Write SGR sequence: ESC [ codes... m
+        if !codes.is_empty() {
+            let params: Vec<String> = codes.iter().map(|c| c.to_string()).collect();
+            self.write_csi(&params.join(";"), b'm');
+        }
+
+        *current = *style;
+    }
+}
+
+impl ratatui::backend::Backend for Pending {
     type Error = io::Error;
+
     fn draw<'a, I>(&mut self, content: I) -> Result<(), Self::Error>
     where
         I: Iterator<Item = (u16, u16, &'a Cell)>,
     {
-        self.0.draw(content)
+        for (x, y, cell) in content {
+            // Move cursor if needed
+            self.set_cursor_pos(x, y);
+
+            // Apply style if changed
+            self.apply_style(&cell.style());
+
+            // Write the symbol
+            let symbol = cell.symbol();
+            if !symbol.is_empty() {
+                self.write_str(symbol);
+                // Update cursor position after writing
+                let mut pos = self.cursor_pos.borrow_mut();
+                pos.x = x + 1;
+            }
+        }
+        Ok(())
     }
 
     fn hide_cursor(&mut self) -> Result<(), Self::Error> {
-        self.0.hide_cursor()
+        let mut visible = self.cursor_visible.borrow_mut();
+        if *visible {
+            // ESC [ ? 25 l - Hide cursor
+            self.write_csi("?25", b'l');
+            *visible = false;
+        }
+        Ok(())
     }
 
     fn show_cursor(&mut self) -> Result<(), Self::Error> {
-        self.0.show_cursor()
+        let mut visible = self.cursor_visible.borrow_mut();
+        if !*visible {
+            // ESC [ ? 25 h - Show cursor
+            self.write_csi("?25", b'h');
+            *visible = true;
+        }
+        Ok(())
     }
 
     fn get_cursor_position(&mut self) -> Result<Position, Self::Error> {
-        self.0.get_cursor_position()
+        Ok(*self.cursor_pos.borrow())
     }
 
     fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> Result<(), Self::Error> {
-        self.0.set_cursor_position(position)
+        let pos = position.into();
+        self.set_cursor_pos(pos.x, pos.y);
+        Ok(())
     }
 
     fn clear(&mut self) -> Result<(), Self::Error> {
-        self.0.clear()
+        // ESC [ 2 J - Clear entire screen
+        self.write_csi("2", b'J');
+        // Reset cursor to top-left
+        self.set_cursor_pos(0, 0);
+        // Reset style
+        *self.current_style.borrow_mut() = ratatui::style::Style::default();
+        self.write_csi("0", b'm');
+        Ok(())
     }
 
     fn clear_region(&mut self, clear_type: ClearType) -> Result<(), Self::Error> {
-        self.0.clear_region(clear_type)
+        // VT420 clear operations
+        match clear_type {
+            ClearType::All => {
+                // ESC [ 2 J - Clear entire screen
+                self.write_csi("2", b'J');
+            }
+            ClearType::CurrentLine => {
+                // ESC [ 2 K - Clear entire line
+                self.write_csi("2", b'K');
+            }
+            ClearType::AfterCursor => {
+                // ESC [ 0 J - Clear from cursor to end of screen
+                self.write_csi("0", b'J');
+            }
+            ClearType::BeforeCursor => {
+                // ESC [ 1 J - Clear from beginning to cursor
+                self.write_csi("1", b'J');
+            }
+            ClearType::UntilNewLine => {
+                // ESC [ 0 K - Clear from cursor to end of line
+                self.write_csi("0", b'K');
+            }
+        }
+        Ok(())
     }
 
     fn size(&self) -> Result<Size, Self::Error> {
-        Ok(*self.1.size.borrow())
+        Ok(*self.size.borrow())
     }
 
     fn window_size(&mut self) -> Result<WindowSize, Self::Error> {
         Ok(WindowSize {
-            columns_rows: *self.1.size.borrow(),
+            columns_rows: *self.size.borrow(),
             pixels: Size::new(10, 16),
         })
     }
 
     fn flush(&mut self) -> Result<(), Self::Error> {
-        self.0.flush()
+        Ok(())
     }
 }
 
@@ -112,7 +333,7 @@ pub struct DemoComm {
     input: bool,
     page: u8,
 
-    screen: ratatui::Terminal<BackendWrapper>,
+    screen: ratatui::Terminal<Pending>,
     list_state: ListState,
 }
 
@@ -120,11 +341,7 @@ impl DemoComm {
     pub fn new(tx: mpsc::SyncSender<u8>, rx: mpsc::Receiver<u8>) -> Self {
         let mut pending = Pending::default();
         pending.size = Rc::new(RefCell::new(Size::new(80, 24)));
-        let screen = ratatui::Terminal::new(BackendWrapper(
-            ratatui::backend::TermionBackend::new(pending.clone()),
-            pending.clone(),
-        ))
-        .unwrap();
+        let screen = ratatui::Terminal::new(pending.clone()).unwrap();
         Self {
             tx,
             rx,
@@ -150,11 +367,7 @@ impl DemoComm {
                     self.xon = false;
                 } else if byte == 0x0c {
                     // ctrl+L - clear screen
-                    let screen = ratatui::Terminal::new(BackendWrapper(
-                        ratatui::backend::TermionBackend::new(self.pending.clone()),
-                        self.pending.clone(),
-                    ))
-                    .unwrap();
+                    let screen = ratatui::Terminal::new(self.pending.clone()).unwrap();
                     self.screen = screen;
                     self.xon = true;
                     self.input = true;

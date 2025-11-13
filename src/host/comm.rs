@@ -54,10 +54,11 @@ impl CommConfig {
             CommConfig::Pipe(pipe)
         } else if loopback {
             CommConfig::Loopback
-        } else if cfg!(feature = "demo") {
-            CommConfig::Demo
         } else {
-            CommConfig::Loopback
+            #[cfg(feature = "demo")]
+            return CommConfig::Demo;
+            #[cfg(not(feature = "demo"))]
+            return CommConfig::Loopback;
         }
     }
 }

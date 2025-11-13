@@ -155,6 +155,8 @@ fn setup_logging(args: &Args, #[cfg(feature = "tui")] trace_collector: TracingCo
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 fn start() {
+    use tracing::error;
+
     console_error_panic_hook::set_once();
     let mut config = tracing_wasm::WASMLayerConfigBuilder::new();
     config.set_max_level(Level::INFO);
@@ -162,7 +164,7 @@ fn start() {
 
     if let Err(e) = run(
         Args {
-            display: Display::Graphics,
+            display: Some(Display::Graphics),
             ..Default::default()
         },
         #[cfg(feature = "tui")]
