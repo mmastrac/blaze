@@ -69,11 +69,10 @@ impl WgpuRender {
                         }
                     }
                 }
-                render.double_width = attr == 0x4;
-                if attr & 0x02 != 0 {
+                render.double_width = !attr.is_single_width();
+                if attr.is_screen_swap_row() {
                     render.screen_2 = !render.screen_2;
                 }
-                // TODO: This flashes like crazy, something isn't quite right
                 render.invert = if render.screen_2 {
                     system.memory.mapper.screen_2_invert()
                 } else {
@@ -90,7 +89,7 @@ impl WgpuRender {
                     system.memory.mapper.screen_1_132_columns()
                 };
                 // Passing through status row in this attribute
-                render.status_row = attr & 0x80 != 0;
+                render.status_row = attr.is_status_row();
                 if render.status_row {
                     render.is_80 = false;
                 }

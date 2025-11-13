@@ -182,6 +182,52 @@ impl Mapper {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct Row(u8, u8);
+
+impl Row {
+    #[inline(always)]
+    pub fn is_screen_swap_row(&self) -> bool {
+        self.1 & 0x02 != 0
+    }
+
+    #[inline(always)]
+    pub fn is_single_width(&self) -> bool {
+        (self.1 >> 2) & 3 == 0
+    }
+
+    #[inline(always)]
+    pub fn is_single_height_double_width(&self) -> bool {
+        (self.1 >> 2) & 3 == 1
+    }
+
+    #[inline(always)]
+    pub fn is_double_height_top(&self) -> bool {
+        (self.1 >> 2) & 3 == 2
+    }
+
+    #[inline(always)]
+    pub fn is_double_height_bottom(&self) -> bool {
+        (self.1 >> 2) & 3 == 3
+    }
+
+    #[inline(always)]
+    pub fn vram_offset(&self) -> u16 {
+        ((self.0 >> 1) as u16) << 8
+    }
+
+    #[inline(always)]
+    pub fn is_invalid(&self) -> bool {
+        self.0 == 0
+    }
+
+    /// This is not correct, but works for now
+    #[inline(always)]
+    pub fn is_status_row(&self) -> bool {
+        self.0 == 0x1C
+    }
+}
+
 /// Decode the VRAM into a grid of characters and attributes.
 /// The row_callback is called for each row, with the row index and the row attributes.
 /// The column_callback is called for each column, with the column, display character and its attributes.
@@ -189,7 +235,7 @@ impl Mapper {
 pub fn decode_vram<T>(
     vram: &[u8],
     mapper: &Mapper,
-    mut row_callback: impl FnMut(&mut T, u8, u8, u8),
+    mut row_callback: impl FnMut(&mut T, u8, Row, u8),
     mut column_callback: impl FnMut(&mut T, u8, u8, u16),
     mut data: T,
 ) -> T {
@@ -204,30 +250,27 @@ pub fn decode_vram<T>(
     let mut screen_2 = mapper.is_screen_2();
 
     for row_idx in 0..rows as u16 {
-        let row_header_offset = vram_base + row_idx as usize * 2;
-        let row_pointer = ((vram[row_header_offset] as u16) >> 1) << 8;
-        if row_pointer == 0 {
+        let row = Row(
+            vram[vram_base + row_idx as usize * 2],
+            vram[vram_base + row_idx as usize * 2 + 1],
+        );
+        if row.is_invalid() {
             continue;
         }
 
-        let mut row_attrs = vram[row_header_offset + 1];
-        if row_attrs & 0x02 != 0 {
+        if row.is_screen_swap_row() {
             screen_2 = !screen_2;
         }
-        let is_double_width = row_attrs & (1 << 2) != 0;
+        let is_double_width = !row.is_single_width();
 
-        let row_address = vram[row_header_offset];
-        if row_address == 0x1C {
-            row_attrs |= 0x80;
-        }
-        let row_is_132 = row_address == 0x1E
+        let row_is_132 = row.is_status_row()
             || if screen_2 {
                 mapper.screen_2_132_columns()
             } else {
                 mapper.screen_1_132_columns()
             };
         let row_height = /*if row_address == 0x1E { 4 } else */ if screen_2 { mapper.row_height_screen_2() } else { mapper.row_height_screen_1() };
-        row_callback(&mut data, row_idx as u8, row_attrs, row_height);
+        row_callback(&mut data, row_idx as u8, row, row_height);
 
         line.fill(0);
         attr.fill(0);
@@ -235,7 +278,7 @@ pub fn decode_vram<T>(
         // Decode 12-bit character codes from packed 3-byte sequences
         let mut b = 0_u16;
         let mut j = 0_usize;
-        let row_addr = row_pointer as usize;
+        let row_addr = row.vram_offset() as usize;
 
         // First segment: 72 chars, bytes 0-107
         for i in 0..108 {
@@ -286,44 +329,13 @@ pub fn decode_vram<T>(
 
         let max_columns = if row_is_132 { 132 } else { 80 };
         let mut decoded_columns = max_columns.min(j);
-        if row_attrs == 0x4 {
+        if !row.is_single_width() {
             decoded_columns >>= 1;
         }
 
         for col in 0..decoded_columns {
             let value = line[col];
             let char_code = (value & 0xff) as u8;
-            // let ch = if value & 0x100 != 0 {
-            //     match char_code {
-            //         0x9c => 'S',
-            //         0x0d => 'H',
-            //         0x54 => 'e',
-            //         0x09 => 's',
-            //         0x52 => 'd',
-            //         0x55 => 'i',
-            //         0x6d => 'l',
-            //         0x7f => 'o',
-            //         0x75 => 'n',
-            //         0x20 => '1',
-            //         0x38 => '2',
-            //         _ => '.',
-            //     }
-            // } else if char_code == 0 || char_code == 0x98 {
-            //     ' '
-            // } else if char_code < 0x20 || char_code > 0x7e {
-            //     match char_code {
-            //         0x0d => '╭',
-            //         0x0c => '╮',
-            //         0x0e => '╰',
-            //         0x0b => '╯',
-            //         0x12 => '─',
-            //         0x19 => '│',
-            //         0xa9 => '©',
-            //         _ => '.',
-            //     }
-            // } else {
-            //     char::from(char_code)
-            // };
 
             let mut combined_attr = (value & 0xf00) as u16 | attr[col] as u16;
             if is_double_width {
@@ -333,11 +345,7 @@ pub fn decode_vram<T>(
                 combined_attr |= 1 << 13;
             }
 
-            // if char_code == 0 && (attr[col] >> 2) == 0xe {
-            //     column_callback(&mut data, col as u8, ' ', combined_attr);
-            // } else {
             column_callback(&mut data, col as u8, char_code, combined_attr);
-            // }
         }
     }
     data
