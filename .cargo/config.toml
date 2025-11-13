@@ -1,0 +1,2 @@
+[alias]
+run-wasm = "run --release --features run-wasm --example run-wasm --"
