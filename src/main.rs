@@ -46,8 +46,8 @@ struct Args {
     nvr: Option<PathBuf>,
 
     /// Display the video output
-    #[arg(long)]
-    display: Display,
+    #[arg(long, conflicts_with = "benchmark")]
+    display: Option<Display>,
 
     /// Comm1: Single bidirectional pipe
     #[arg(long = "comm1-pipe", value_name = "PIPE", group = "comm1")]
@@ -112,6 +112,10 @@ struct Args {
     /// Enable verbose output
     #[arg(short, long)]
     verbose: bool,
+
+    /// Run the benchmark mode to see how many cycles we can hit
+    #[arg(long, conflicts_with = "display")]
+    benchmark: bool,
 }
 
 fn parse_hex_address(s: &str) -> Result<u32, Box<dyn std::error::Error + Send + Sync>> {
@@ -131,7 +135,7 @@ fn setup_logging(args: &Args, #[cfg(feature = "tui")] trace_collector: TracingCo
         return;
     }
 
-    match args.display {
+    match args.display.unwrap_or(Display::Headless) {
         Display::Headless => {
             host::logging::setup_logging_stdio(level);
         }
@@ -169,7 +173,12 @@ fn start() {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let args = Args::parse();
+    let mut args = Args::parse();
+
+    // Set display to Headless if benchmark is set
+    if args.benchmark {
+        args.display = Some(Display::Headless);
+    }
 
     #[cfg(feature = "tui")]
     let trace_collector = TracingCollector::new(1000);
@@ -246,7 +255,7 @@ fn run(
     }
 
     info!("Starting CPU execution...");
-    let cpu = Cpu::new();
+    let mut cpu = Cpu::new();
     #[cfg(not(target_arch = "wasm32"))]
     let start_time = Instant::now();
     info!("CPU initialized, PC = 0x{:04X}", cpu.pc_ext(&system));
@@ -262,24 +271,31 @@ fn run(
         None
     };
 
-    let instruction_count = match args.display {
-        Display::Headless => host::screen::headless::run(
-            system,
-            cpu,
-            #[cfg(feature = "tui")]
-            debugger,
-        )?,
-        #[cfg(feature = "tui")]
-        Display::Text => {
-            host::screen::ratatui::run(system, cpu, debugger, args.show_mapper, args.show_vram)?
+    let instruction_count = if args.benchmark {
+        for _ in 0..100_000_000 {
+            system.step(&mut cpu);
         }
-        #[cfg(feature = "graphics")]
-        Display::Graphics => host::screen::wgpu::run(
-            system,
-            cpu,
+        system.instruction_count
+    } else {
+        match args.display.unwrap_or(Display::Headless) {
+            Display::Headless => host::screen::headless::run(
+                system,
+                cpu,
+                #[cfg(feature = "tui")]
+                debugger,
+            )?,
             #[cfg(feature = "tui")]
-            debugger,
-        )?,
+            Display::Text => {
+                host::screen::ratatui::run(system, cpu, debugger, args.show_mapper, args.show_vram)?
+            }
+            #[cfg(feature = "graphics")]
+            Display::Graphics => host::screen::wgpu::run(
+                system,
+                cpu,
+                #[cfg(feature = "tui")]
+                debugger,
+            )?,
+        }
     };
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -290,10 +306,9 @@ fn run(
     println!("  Time elapsed: {:?}", elapsed);
     #[cfg(not(target_arch = "wasm32"))]
     if elapsed.as_secs_f64() > 0.0 {
-        println!(
-            "  Instructions per second: {:.0}",
-            instruction_count as f64 / elapsed.as_secs_f64()
-        );
+        let ips = instruction_count as f64 / elapsed.as_secs_f64();
+        println!("  Instructions per second: {ips:.0}",);
+        println!("  % of real CPU: {:.0}%", ips / 1000000.0 * 100.0);
     }
 
     println!("VT420 emulator execution completed!");
