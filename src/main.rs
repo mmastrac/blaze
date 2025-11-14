@@ -41,6 +41,11 @@ struct Args {
     #[cfg(not(feature = "embed-rom"))]
     rom: PathBuf,
 
+    /// Path to the ROM file
+    #[arg(long)]
+    #[cfg(feature = "embed-rom")]
+    rom: Option<PathBuf>,
+
     /// Path to the non-volatile RAM file
     #[arg(long)]
     nvr: Option<PathBuf>,
@@ -203,8 +208,6 @@ fn run(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("VT420 Emulator starting...");
 
-    #[cfg(feature = "embed-rom")]
-    let rom = { include_bytes!("../roms/vt420/23-068E9-00.bin").to_vec() };
     #[cfg(not(feature = "embed-rom"))]
     let rom = {
         use std::fs;
@@ -217,6 +220,22 @@ fn run(
         }
 
         fs::read(&args.rom)?
+    };
+
+    #[cfg(feature = "embed-rom")]
+    let mut rom = { include_bytes!("../roms/vt420/23-068E9-00.bin").to_vec() };
+    #[cfg(feature = "embed-rom")]
+    if let Some(rom_path) = args.rom {
+        use std::fs;
+        info!("Loading ROM file: {:?}...", rom_path);
+
+        // Check if ROM file exists
+        if !rom_path.exists() {
+            info!("Error: ROM file does not exist: {:?}", rom_path);
+            std::process::exit(1);
+        }
+
+        rom = fs::read(&rom_path)?;
     };
 
     info!("Configuring system...");
