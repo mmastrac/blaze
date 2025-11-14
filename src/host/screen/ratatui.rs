@@ -67,7 +67,7 @@ impl<'a> Widget for Screen<'a> {
             // Bit 2: double width
             // Bit 1: swap between screen 0 and screen 1 attributes
             let row_attrs = vram[vram_base + row_idx as usize * 2 + 1];
-            let is_double_width = row_attrs & (1 << 2) != 0;
+            let is_double_width = (row_attrs >> 2) & 3 != 0;
             // If true, force 132 characters per line
             let row_is_132 = vram[vram_base + row_idx as usize * 2] & 1 != 0;
 
@@ -219,6 +219,7 @@ impl<'a> Widget for Screen<'a> {
                             char::from(char_code as u8)
                         };
 
+                        let mut style = Style::default();
                         if let Some(cell) = buf.cell_mut((area.left() + col, area.top() + row_idx))
                         {
                             if char_code == 0 && attr[i] >> 2 == 0xe {
@@ -228,7 +229,6 @@ impl<'a> Widget for Screen<'a> {
                                 continue;
                             }
                             cell.set_symbol(&ch.to_string());
-                            let mut style = Style::default();
                             if attr[i] & 1 != 0 {
                                 style = style.underlined();
                             }
@@ -257,7 +257,7 @@ impl<'a> Widget for Screen<'a> {
                                 buf.cell_mut((area.left() + col, area.top() + row_idx))
                             {
                                 cell.set_symbol(" ");
-                                cell.set_style(Style::default());
+                                cell.set_style(style);
                             }
                             col += 1;
                         }
