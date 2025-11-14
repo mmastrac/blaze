@@ -1,11 +1,7 @@
 use std::cell::Cell;
 use std::cell::RefCell;
-use std::fs;
-use std::io;
-use std::path::Path;
 use std::rc::Rc;
 
-use hex_literal::hex;
 use i8051::sfr::SFR_P1;
 use i8051::sfr::SFR_P2;
 use i8051::sfr::SFR_P3;

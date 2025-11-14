@@ -42,7 +42,7 @@ impl WgpuRender {
             ..Default::default()
         };
         let mut font = [0_u16; 16];
-        decode_vram(
+        let render = decode_vram(
             &system.memory.vram[system.memory.mapper.vram_offset_display() as usize..],
             &system.memory.mapper,
             |render, row, attr, row_flags| {
@@ -88,6 +88,13 @@ impl WgpuRender {
                 for mut y in 0..render.row_flags.row_height as usize {
                     if render.row + y >= 416 {
                         break;
+                    }
+                    if c == 0 && !render.row_flags.is_80 {
+                        // Stopgap to fix the leftover pixels at the end of the frame
+                        const LEFTOVER_132_PIXELS: usize = 80 * 10 - 132 * 6;
+                        for i in 0..LEFTOVER_132_PIXELS * 4 {
+                            render.frame[offset + 800 * 4 - LEFTOVER_132_PIXELS * 4 + i] = 0;
+                        }
                     }
                     if render.row_flags.double_width {
                         if render.row_flags.double_height_top {
@@ -145,6 +152,11 @@ impl WgpuRender {
             },
             render,
         );
+
+        // Stopgap to fix the leftover pixels at the end of the frame
+        if render.row_offset < render.frame.len() {
+            render.frame[render.row_offset..].fill(0);
+        }
     }
 }
 
