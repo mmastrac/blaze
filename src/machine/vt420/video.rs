@@ -182,6 +182,10 @@ impl Mapper {
     }
 }
 
+/// Row VRAM data:
+///
+/// - Byte 0: Row address (shifted left by 1). Lower bit use unknown.
+/// - Byte 1: Row attributes
 #[derive(Clone, Copy, Debug)]
 pub struct Row(u8, u8);
 
@@ -228,6 +232,21 @@ impl Row {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RowFlags {
+    pub is_80: bool,
+    pub invert: bool,
+    pub double_width: bool,
+    pub double_height_top: bool,
+    pub double_height_bottom: bool,
+    pub status_row: bool,
+    pub screen_2: bool,
+    pub row_height: u8,
+    pub font: u8,
+}
+
+struct Cell(u8, u8, u8);
+
 /// Decode the VRAM into a grid of characters and attributes.
 /// The row_callback is called for each row, with the row index and the row attributes.
 /// The column_callback is called for each column, with the column, display character and its attributes.
@@ -235,7 +254,7 @@ impl Row {
 pub fn decode_vram<T>(
     vram: &[u8],
     mapper: &Mapper,
-    mut row_callback: impl FnMut(&mut T, u8, Row, u8),
+    mut row_callback: impl FnMut(&mut T, u8, Row, RowFlags),
     mut column_callback: impl FnMut(&mut T, u8, u8, u16),
     mut data: T,
 ) -> T {
@@ -261,16 +280,35 @@ pub fn decode_vram<T>(
         if row.is_screen_swap_row() {
             screen_2 = !screen_2;
         }
-        let is_double_width = !row.is_single_width();
 
-        let row_is_132 = row.is_status_row()
-            || if screen_2 {
+        let row_flags = RowFlags {
+            screen_2,
+            is_80: !if screen_2 {
                 mapper.screen_2_132_columns()
             } else {
                 mapper.screen_1_132_columns()
-            };
-        let row_height = /*if row_address == 0x1E { 4 } else */ if screen_2 { mapper.row_height_screen_2() } else { mapper.row_height_screen_1() };
-        row_callback(&mut data, row_idx as u8, row, row_height);
+            },
+            invert: if screen_2 {
+                mapper.screen_2_invert()
+            } else {
+                mapper.screen_1_invert()
+            },
+            double_width: !row.is_single_width(),
+            double_height_top: row.is_double_height_top(),
+            double_height_bottom: row.is_double_height_bottom(),
+            status_row: row.is_status_row(),
+            row_height: if screen_2 {
+                mapper.row_height_screen_2()
+            } else {
+                mapper.row_height_screen_1()
+            },
+            font: if screen_2 {
+                mapper.get(0xc) & 0xf0
+            } else {
+                mapper.get2(0xc) & 0xf0
+            },
+        };
+        row_callback(&mut data, row_idx as u8, row, row_flags);
 
         line.fill(0);
         attr.fill(0);
@@ -327,7 +365,7 @@ pub fn decode_vram<T>(
             attr[i - 1] |= cell_attr << 2;
         }
 
-        let max_columns = if row_is_132 { 132 } else { 80 };
+        let max_columns = if row_flags.is_80 { 80 } else { 132 };
         let mut decoded_columns = max_columns.min(j);
         if !row.is_single_width() {
             decoded_columns >>= 1;
@@ -338,10 +376,10 @@ pub fn decode_vram<T>(
             let char_code = (value & 0xff) as u8;
 
             let mut combined_attr = (value & 0xf00) as u16 | attr[col] as u16;
-            if is_double_width {
+            if row_flags.double_width {
                 combined_attr |= 1 << 12;
             }
-            if row_is_132 {
+            if !row_flags.is_80 {
                 combined_attr |= 1 << 13;
             }
 

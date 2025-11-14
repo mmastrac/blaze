@@ -10,7 +10,7 @@ use ratatui::crossterm;
 
 use crate::{
     System,
-    machine::vt420::video::{decode_font, decode_vram},
+    machine::vt420::video::{RowFlags, decode_font, decode_vram},
 };
 
 #[derive(Default)]
@@ -27,19 +27,12 @@ impl WgpuRender {
         struct Render<'a> {
             row: usize,
             row_offset: usize,
-            row_height: usize,
-            is_80: bool,
-            double_width: bool,
-            status_row: bool,
-            screen_2: bool,
-            font: u8,
+            row_flags: RowFlags,
             start_row: usize,
             frame: &'a mut [u8],
-            invert: bool,
             smooth: (u8, u8, u8),
         }
         let render = Render {
-            screen_2: system.memory.mapper.is_screen_2(),
             smooth: (
                 system.memory.mapper.get(0),
                 system.memory.mapper.get(1),
@@ -52,84 +45,71 @@ impl WgpuRender {
         decode_vram(
             &system.memory.vram[system.memory.mapper.vram_offset_display() as usize..],
             &system.memory.mapper,
-            |render, row, attr, row_height| {
-                render.row += render.row_height;
-                render.row_offset += 800 * 4 * render.row_height;
+            |render, row, attr, row_flags| {
+                render.row += render.row_flags.row_height as usize;
+                render.row_offset += 800 * 4 * render.row_flags.row_height as usize;
 
-                render.row_height = row_height as usize;
+                render.row_flags = row_flags;
                 render.start_row = 0;
                 if render.smooth.2 != 0 {
                     if (render.smooth.0..=render.smooth.1).contains(&row) {
                         if row == render.smooth.0 {
                             render.start_row = render.smooth.2 as usize;
-                            render.row_height = render.row_height - render.smooth.2 as usize;
+                            render.row_flags.row_height =
+                                render.row_flags.row_height - render.smooth.2;
                         } else if row == render.smooth.1 {
                             //render.start_row += 1;
-                            render.row_height = render.smooth.2 as usize;
+                            render.row_flags.row_height = render.smooth.2;
                         }
                     }
-                }
-                render.double_width = !attr.is_single_width();
-                if attr.is_screen_swap_row() {
-                    render.screen_2 = !render.screen_2;
-                }
-                render.invert = if render.screen_2 {
-                    system.memory.mapper.screen_2_invert()
-                } else {
-                    system.memory.mapper.screen_1_invert()
-                };
-                render.font = if render.screen_2 {
-                    system.memory.mapper.get(0xc) & 0xf0
-                } else {
-                    system.memory.mapper.get2(0xc) & 0xf0
-                };
-                render.is_80 = !if render.screen_2 {
-                    system.memory.mapper.screen_2_132_columns()
-                } else {
-                    system.memory.mapper.screen_1_132_columns()
-                };
-                // Passing through status row in this attribute
-                render.status_row = attr.is_status_row();
-                if render.status_row {
-                    render.is_80 = false;
                 }
             },
             |render, column, c, attr| {
                 let c = c as usize | ((((attr >> 2) & 0x01) as usize) << 8);
                 let mut c = c * 2;
-                if attr >> 2 & 0x8 != 0 && render.status_row {
+                if attr >> 2 & 0x8 != 0 && render.row_flags.status_row {
                     c = c.saturating_sub(1);
                 }
                 let bold = attr & 0x08 != 0;
                 let underline = attr & 1 != 0;
                 let color = if bold { 0xff } else { 0x80 };
-                let mut font_address_base = c * 16 + 0x8000 + render.font as usize * 0x80;
-                if !render.is_80 {
+                let mut font_address_base = c * 16 + 0x8000 + render.row_flags.font as usize * 0x80;
+                if !render.row_flags.is_80 {
                     font_address_base += 16;
                 }
                 decode_font(
                     system.memory.vram.as_ref(),
                     font_address_base as _,
-                    render.is_80,
+                    render.row_flags.is_80,
                     &mut font,
                 );
-                let width = if render.is_80 { 10 } else { 6 };
+                let width = if render.row_flags.is_80 { 10 } else { 6 };
                 let mut offset = render.row_offset;
-                for y in 0..render.row_height {
+                for mut y in 0..render.row_flags.row_height as usize {
                     if render.row + y >= 416 {
                         break;
                     }
-                    if render.double_width {
+                    if render.row_flags.double_width {
+                        if render.row_flags.double_height_top {
+                            y /= 2;
+                        } else if render.row_flags.double_height_bottom {
+                            y /= 2;
+                            y += render.row_flags.row_height as usize / 2;
+                        }
                         for x in 0..width {
                             let x_offset = (column as usize * width + x) * 8;
                             let mut pixel = font[y + render.start_row] & (1 << x) != 0;
-                            if underline && y == render.row_height - 1 {
+                            if underline && y == render.row_flags.row_height as usize - 1 {
                                 pixel = true;
                             }
                             if attr & 16 != 0 {
                                 pixel = !pixel;
                             }
-                            let color = if pixel ^ render.invert { color } else { 0x00 };
+                            let color = if pixel ^ render.row_flags.invert {
+                                color
+                            } else {
+                                0x00
+                            };
                             render.frame[offset + x_offset] = color;
                             render.frame[offset + x_offset + 1] = color;
                             render.frame[offset + x_offset + 2] = color;
@@ -143,13 +123,17 @@ impl WgpuRender {
                         for x in 0..width {
                             let x_offset = (column as usize * width + x) * 4;
                             let mut pixel = font[y + render.start_row] & (1 << x) != 0;
-                            if underline && y == render.row_height - 1 {
+                            if underline && y == render.row_flags.row_height as usize - 1 {
                                 pixel = true;
                             }
                             if attr & 16 != 0 {
                                 pixel = !pixel;
                             }
-                            let color = if pixel ^ render.invert { color } else { 0x00 };
+                            let color = if pixel ^ render.row_flags.invert {
+                                color
+                            } else {
+                                0x00
+                            };
                             render.frame[offset + x_offset] = color;
                             render.frame[offset + x_offset + 1] = color;
                             render.frame[offset + x_offset + 2] = color;
