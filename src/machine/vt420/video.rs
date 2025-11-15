@@ -228,7 +228,7 @@ impl Row {
     /// This is not correct, but works for now
     #[inline(always)]
     pub fn is_status_row(&self) -> bool {
-        self.0 == 0x1C
+        self.0 == 0x1C || self.0 == 0x1E
     }
 }
 
@@ -242,7 +242,7 @@ pub struct RowFlags {
     pub status_row: bool,
     pub screen_2: bool,
     pub row_height: u8,
-    pub font: u8,
+    pub font: u16,
 }
 
 struct Cell(u8, u8, u8);
@@ -281,13 +281,28 @@ pub fn decode_vram<T>(
             screen_2 = !screen_2;
         }
 
+        let font = if screen_2 && !row.is_status_row() {
+            mapper.get(0xc)
+        } else {
+            mapper.get2(0xc)
+        } as u16;
+
+        let mut is_132 = if screen_2 {
+            mapper.screen_2_132_columns()
+        } else {
+            mapper.screen_1_132_columns()
+        };
+
+        let mut font = (font & 0xf0) * 0x80;
+        if row.is_status_row() {
+            is_132 = true;
+        } else if is_132 {
+            font += 16;
+        };
+
         let row_flags = RowFlags {
             screen_2,
-            is_80: !if screen_2 {
-                mapper.screen_2_132_columns()
-            } else {
-                mapper.screen_1_132_columns()
-            },
+            is_80: !is_132,
             invert: if screen_2 {
                 mapper.screen_2_invert()
             } else {
@@ -302,11 +317,7 @@ pub fn decode_vram<T>(
             } else {
                 mapper.row_height_screen_1()
             },
-            font: if screen_2 {
-                mapper.get(0xc) & 0xf0
-            } else {
-                mapper.get2(0xc) & 0xf0
-            },
+            font,
         };
         row_callback(&mut data, row_idx as u8, row, row_flags);
 

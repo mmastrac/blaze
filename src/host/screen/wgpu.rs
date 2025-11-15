@@ -67,16 +67,13 @@ impl WgpuRender {
             |render, column, c, attr| {
                 let c = c as usize | ((((attr >> 2) & 0x01) as usize) << 8);
                 let mut c = c * 2;
-                if attr >> 2 & 0x8 != 0 && render.row_flags.status_row {
-                    c = c.saturating_sub(1);
+                if render.row_flags.status_row && attr >> 2 & 0x8 == 0 {
+                    c = c.saturating_add(1);
                 }
                 let bold = attr & 0x08 != 0;
                 let underline = attr & 1 != 0;
                 let color = if bold { 0xff } else { 0x80 };
-                let mut font_address_base = c * 16 + 0x8000 + render.row_flags.font as usize * 0x80;
-                if !render.row_flags.is_80 {
-                    font_address_base += 16;
-                }
+                let font_address_base = c * 16 + 0x8000 + render.row_flags.font as usize;
                 decode_font(
                     system.memory.vram.as_ref(),
                     font_address_base as _,

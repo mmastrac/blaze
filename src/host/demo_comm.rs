@@ -537,62 +537,81 @@ impl DemoComm {
     }
 }
 
+fn blank_line<'a>() -> Line<'a> {
+    Line::from(vec![])
+}
+
+fn line<'a>(spans: &[Span<'a>]) -> Line<'a> {
+    Line::from(spans.to_vec())
+}
+
+fn span<'a>(text: &'a str) -> Span<'a> {
+    Span::from(text)
+}
+
+fn bold<'a>(text: &'a str) -> Span<'a> {
+    Span::styled(text, Style::default().bold())
+}
+
+fn underlined<'a>(text: &'a str) -> Span<'a> {
+    Span::styled(text, Style::default().underlined())
+}
+
+fn reversed<'a>(text: &'a str) -> Span<'a> {
+    Span::styled(text, Style::default().reversed())
+}
+
 fn create_demo_text<'a>() -> Paragraph<'a> {
     let mut lines = vec![];
-    lines.push(Line::from(vec![
-        Span::styled("Blaze", Style::default().bold()),
-        Span::from(
-            " is an emulator for the VT420 terminal. "
-        ),
-        Span::from(
-            "This text is displayed by default if you don't configure a connection when starting the emulator. "
-        ),
+    lines.push(line(&[
+        bold("Blaze"),
+        span(" is an emulator for the VT420 terminal. "),
+        span("This text is displayed by default if you don't configure a connection when starting the emulator. "),
     ]));
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![Span::styled(
-        "Tips:",
-        Style::default().underlined(),
-    )]));
-    lines.push(Line::from(vec![
-        Span::from(" * Press "),
-        Span::styled("F3", Style::default().reversed()),
-        Span::from(" to configure the terminal"),
+    lines.push(blank_line());
+    lines.push(line(&[underlined("Tips:")]));
+    lines.push(line(&[
+        span(" * Press "),
+        reversed("F3"),
+        span(" to configure the terminal"),
     ]));
-    lines.push(Line::from(vec![
-        Span::from(" * The terminal supports 80/132 columns and 24/36/48 rows (configured under "),
-        Span::styled("Display", Style::default().underlined()),
-        Span::from("). For best results, set the "),
-        Span::styled("Page size", Style::default().underlined()),
-        Span::from(" to "),
-        Span::styled("1x144", Style::default().underlined()),
-        Span::from("."),
+    lines.push(line(&[
+        span(" * The terminal supports 80/132 columns and 24/36/48 rows (configured under "),
+        underlined("Display"),
+        span(")."),
     ]));
-    lines.push(Line::from(vec![
-        Span::from(" * To configure multiple sessions, select "),
-        Span::styled("Global > S1=Comm1, S2=Comm2", Style::default().underlined()),
+    lines.push(line(&[
+        span(" * For best results, set the "),
+        underlined("Page size"),
+        span(" to "),
+        underlined("1x144"),
+        span(" (for 1 session) or "),
+        underlined("1x72"),
+        span(" (for 2 sessions)."),
     ]));
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::styled("Blaze", Style::default().bold()),
-        Span::from(" is open source software licensed under the AGPL-3.0 license."),
+    lines.push(line(&[
+        span(" * To configure multiple sessions, select "),
+        underlined("Global > S1=Comm1, S2=Comm2"),
     ]));
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::from("Source code is available at "),
-        Span::styled(
-            "https://github.com/mmastrac/blaze-vt",
-            Style::default().underlined(),
-        ),
+    lines.push(line(&[
+        span(" * Switch between multiple sessions with "),
+        reversed("F4"),
+        span(" or split the screen with "),
+        reversed("Ctrl+F4"),
+        span("."),
     ]));
-
-    lines.push(Line::from(""));
-    lines.push(Line::from(""));
-    lines.push(
-        Line::styled(
-            "[ Press the right arrow key --> ]",
-            Style::default().reversed(),
-        )
-        .centered(),
-    );
+    lines.push(blank_line());
+    lines.push(line(&[
+        bold("Blaze"),
+        span(" is open-source software written by Matt Mastracci and licensed under the AGPL-3.0 license."),
+    ]));
+    lines.push(blank_line());
+    lines.push(line(&[
+        span("Source code is available at "),
+        underlined("https://github.com/mmastrac/blaze-vt"),
+    ]));
+    lines.push(blank_line());
+    lines.push(blank_line());
+    lines.push(line(&[reversed("[ Press the right arrow key --> ]")]).centered());
     Paragraph::new(lines)
 }
