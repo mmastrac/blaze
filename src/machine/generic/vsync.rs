@@ -24,6 +24,14 @@ impl Timing {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncPhase {
+    VSync(u16),
+    Active(u16),
+    FrontPorch(u16),
+    BackPorch(u16),
+}
+
 #[derive(Debug)]
 pub struct SyncGen {
     pub t: Timing,
@@ -34,6 +42,29 @@ pub struct SyncGen {
 impl SyncGen {
     pub fn new(t: Timing) -> Self {
         Self { t, x: 0, y: 0 }
+    }
+
+    pub fn phase(&self) -> SyncPhase {
+        let v_sync_start = 0;
+        let v_sync_end = v_sync_start + self.t.v_sync;
+        let in_vsync = self.y >= v_sync_start && self.y < v_sync_end;
+
+        // vsync -> bp -> active -> fp -> vsync
+        if in_vsync {
+            SyncPhase::VSync(self.y.saturating_sub(v_sync_start))
+        } else {
+            let y = self.y.saturating_sub(v_sync_end);
+            if y < self.t.v_bp {
+                SyncPhase::BackPorch(y)
+            } else {
+                let y = y.saturating_sub(self.t.v_bp);
+                if y < self.t.v_active {
+                    SyncPhase::Active(y)
+                } else {
+                    SyncPhase::FrontPorch(y.saturating_sub(self.t.v_active))
+                }
+            }
+        }
     }
 
     /// Advance by one pixel clock. Returns true if CSYNC is set. CSYNC is

@@ -162,19 +162,26 @@ impl System {
         breakpoints.run(true, cpu, self);
         mem::swap(&mut self.breakpoints, &mut breakpoints);
 
+        let pc = cpu.pc_ext(self);
+        // Trace VSYNC phase for timer interrupts
+        // if pc == 0x928 {
+        //     let flag = cpu.internal_ram[0x20] & (1 << 7) != 0;
+        //     info!("PC = 0x928, phase = {:?}, flag = {flag}", self.video_row.sync.sync_gen.borrow().phase());
+        // }
+
         let prev_0x1f = cpu.internal_ram[0x1f];
         cpu.step(self);
         let new_0x1f = cpu.internal_ram[0x1f];
         if prev_0x1f != new_0x1f {
             debug!(
                 "0x1f changed from {prev_0x1f:02X} to {new_0x1f:02X} @ {:04X}",
-                cpu.pc_ext(self)
+                pc
             );
         }
 
         #[cfg(feature = "pc-trace")]
         {
-            self.pc_bitset.insert(cpu.pc_ext(self) as usize);
+            self.pc_bitset.insert(pc as usize);
         }
 
         self.memory.tick();

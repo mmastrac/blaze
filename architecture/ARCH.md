@@ -106,7 +106,8 @@ Output:
   - `...._.x..` => CMNCLK?
 
  - 0x7ff0
-  - Smooth scrolling start register
+  - `xx.......` => GPIOs? Set to 0x40 on 2E firmware if P1.7 is toggling
+  - `..xx_xxxx` => Smooth scrolling start register
 
  - 0x7ff1
   - Smooth scrolling stop register
@@ -138,13 +139,14 @@ Output:
   - `...._.x..` => x = ROM bank select (CONFIRMED via ROM disassembly)
   - `...._..xx` => ??? (set to 0 during boot)
 
- - 0x7ff6: 2x 8-bit register, written twice, once for top and once for bottom half of screen
-    - Reads appear to be some sort of chargen status (uncertain, function of whole screen)
+ - 0x7ff6: 2x 8-bit register, written twice, once for screen 1 and once for screen 2
+    - Reads appear to be some sort of chargen status (uncertain, function of whole screen + 7ff3/7ff4 registers)
+    - Writes advance the chargen position to the next row if a row is partially written
     - <a><b> - font height/row height (0 for 16px)
     - 78: 50 lines (0111_1000)
     - 9A: 38 lines (1001_1010)
     - D0: 26 lines (1101_0000)
-    - F0/FC: (set during vsync based on screen 2 height register: 1111_????, F0 = 24 lines, FC = other)
+    - F0/FC: (set during status bar rows)
 
  - 0x7ff7/0x7ff8: screen offset (x/y), default 0x1e for each
     - x: 0x0a -> 0x32 (20px)

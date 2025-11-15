@@ -18,7 +18,7 @@ pub const TIMING_60HZ: Timing = Timing {
     v_active: VERTICAL_LINES as u16, // Expected by ROM
     v_fp: 4,
     v_sync: 16,
-    v_bp: 188, // Vtot = 625
+    v_bp: 188, // Vtot = 625, Vtot_blank = 208
 };
 
 pub const TIMING_70HZ: Timing = Timing {
@@ -29,7 +29,7 @@ pub const TIMING_70HZ: Timing = Timing {
     v_active: VERTICAL_LINES as u16, // Expected by ROM
     v_fp: 3,
     v_sync: 16,
-    v_bp: 100, // Vtot = 536
+    v_bp: 100, // Vtot = 536, Vtot_blank = 119
 };
 
 pub struct Mapper {
@@ -207,13 +207,12 @@ fn row_count(font_regs: [u8; 2], vram: &[u8]) -> Option<u8> {
     let nibble_to_lines = |n| ((n + 15) % 16) + 1;
 
     let rh1 = nibble_to_lines(r1 & 0x0f);
-    let rc1 = nibble_to_lines((r1 & 0xf0) >> 4);
     let rh2 = nibble_to_lines(r2 & 0x0f);
 
     debug_assert!(rh1 > 0 && rh1 <= 16);
     debug_assert!(rh2 > 0 && rh2 <= 16);
 
-    let mut remaining = VERTICAL_LINES;
+    let mut remaining = VERTICAL_LINES - 17;
     let mut rh = rh1 as usize;
     let mut screen = 0;
     let mut count = 0;
@@ -227,9 +226,9 @@ fn row_count(font_regs: [u8; 2], vram: &[u8]) -> Option<u8> {
         count += 1;
         remaining = remaining.saturating_sub(rh);
         eprintln!("{count}: {row_addr:02X} remaining={remaining}, rh={rh}");
-        if remaining < rc1 as usize {
-            eprintln!("{count}: {remaining} <= {rc1}");
-            return Some(count);
+        if remaining == 0 {
+            eprintln!("{count}: {remaining} = 0");
+            return Some(count + 1);
         }
     }
 
@@ -710,15 +709,28 @@ mod tests {
         }
 
         // Diagnostics: D0/D0
-        row_count_test(0x3c, 0xd0, 0xd0, &hex!("
+        row_count_test(0x1e, 0xd0, 0xd0, &hex!("
         02 00 04 00 08 00 10 00 0A 00 20 00 40 00 80 00 A0 00 E0 00 22 00 44 00 88 00 54 00 AA 00 06 00
         0C 00 18 00 30 00 60 00 C0 00 0E 00 1C 00 38 02 70 00 1E 00 3C 00 00 00 00 00 00 00 00 00 00 00"));
+
+        // One session, 36 lines, with page size smaller than screen size, no status bar
+        row_count_test(0x1c, 0x9a, 0x9a, &hex!("
+        22 04 24 00 26 00 28 00 2A 00 2C 00 2E 00 30 00 32 00 34 00 36 00 38 00 3A 00 3C 00 3E 00 40 00 
+        42 00 44 00 46 00 48 00 4A 00 4C 00 4E 00 50 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 
+        1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1C 00 1E 00 1E 00 78 00 7A 00 7C 00 7E 00 80 00"));
 
         // One session, 36 lines, with page size smaller than screen size
         row_count_test(0x1c, 0x9a, 0x9a, &hex!("
         22 04 24 00 26 00 28 00 2A 00 2C 00 2E 00 30 00 32 00 34 00 36 00 38 00 3A 00 3C 00 3E 00 40 00 
         42 00 44 00 46 00 48 00 4A 00 4C 00 4E 00 50 00 16 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 
         1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1C 00 1E 00 1E 00 78 00 7A 00 7C 00 7E 00 80 00"));
+
+        // One session, 48 lines (small page size)
+        row_count_test(0x1c, 0x78, 0x78, &hex!("
+        22 04 24 00 26 00 28 00 2A 00 2C 00 2E 00 30 00 32 00 34 00 36 00 38 00 3A 00 3C 00 3E 00 40 00 
+        42 00 44 00 46 00 48 00 4A 00 4C 00 4E 00 50 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 
+        1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 
+        1E 00 1E 00 1C 00 1E 00 1E 00 00 00 00 00 00 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00 00 00 "));
 
         // Two sessions, top 36 lines, bottom 25 lines, split approximately in half (initial split)
         row_count_test(0x1c, 0x9a, 0xd0, &hex!("
@@ -732,42 +744,55 @@ mod tests {
         42 00 44 00 46 00 48 00 4A 00 16 00 90 02 92 00 94 00 96 00 98 00 9A 00 9C 00 9E 00 A0 00 A2 00
         18 00 1E 00 1C 00 1E 00 1E 00 1E 00 1E 00 1E 00 1C 00 1E 00 1E 00 78 00 7A 00 7C 00 7E 00 80 00"));
 
-        // // Move split down twice
-        // 22 04 24 00 26 00 28 00 2A 00 2C 00 2E 00 30 00 32 00 34 00 36 00 38 00 3A 00 3C 00 3E 00 40 00
-        // 42 00 44 00 46 00 48 00 4A 00 4C 00 4E 00 16 00 90 02 92 00 94 00 96 00 98 00 9A 00 9C 00 9E 00
-        // A0 00 18 00 1C 00 1E 00 1E 00 1E 00 1E 00 1E 00 1C 00 1E 00 1E 00 78 00 7A 00 7C 00 7E 00 80 00
+        // Move split down twice
+        row_count_test(0x1c, 0x9a, 0xd0, &hex!("
+        22 04 24 00 26 00 28 00 2A 00 2C 00 2E 00 30 00 32 00 34 00 36 00 38 00 3A 00 3C 00 3E 00 40 00
+        42 00 44 00 46 00 48 00 4A 00 4C 00 4E 00 16 00 90 02 92 00 94 00 96 00 98 00 9A 00 9C 00 9E 00
+        A0 00 18 00 1C 00 1E 00 1E 00 1E 00 1E 00 1E 00 1C 00 1E 00 1E 00 78 00 7A 00 7C 00 7E 00 80 00"));
 
-        // // Move split down thrice
-        // 22 04 24 00 26 00 28 00 2A 00 2C 00 2E 00 30 00 32 00 34 00 36 00 38 00 3A 00 3C 00 3E 00 40 00
-        // 42 00 44 00 46 00 48 00 4A 00 4C 00 4E 00 50 00 16 00 90 02 92 00 94 00 96 00 98 00 9A 00 9C 00
-        // 9E 00 18 00 1E 00 1C 00 1E 00 1E 00 1E 00 1E 00 1C 00 1E 00 1E 00 78 00 7A 00 7C 00 7E 00 80 00
+        // Move split down thrice
+        row_count_test(0x1c, 0x9a, 0xd0, &hex!("
+        22 04 24 00 26 00 28 00 2A 00 2C 00 2E 00 30 00 32 00 34 00 36 00 38 00 3A 00 3C 00 3E 00 40 00
+        42 00 44 00 46 00 48 00 4A 00 4C 00 4E 00 50 00 16 00 90 02 92 00 94 00 96 00 98 00 9A 00 9C 00
+        9E 00 18 00 1E 00 1C 00 1E 00 1E 00 1E 00 1E 00 1C 00 1E 00 1E 00 78 00 7A 00 7C 00 7E 00 80 00"));
 
-        // // Split near the top
-        // 22 04 24 00 26 00 16 00 90 02 92 00 94 00 96 00 98 00 9A 00 9C 00 9E 00 A0 00 A2 00 A4 00 A6 00
-        // A8 00 AA 00 AC 00 AE 00 B0 00 B2 00 B4 00 B6 00 B8 00 18 00 1E 00 1C 00 1E 00 1E 00 1E 00 1E 00
-        // 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1C 00 1E 00 1E 00 78 00 7A 00 7C 00 7E 00 80 00
+        // Split near the top
+        row_count_test(0x1c, 0x9a, 0xd0, &hex!("
+        22 04 24 00 26 00 16 00 90 02 92 00 94 00 96 00 98 00 9A 00 9C 00 9E 00 A0 00 A2 00 A4 00 A6 00
+        A8 00 AA 00 AC 00 AE 00 B0 00 B2 00 B4 00 B6 00 B8 00 18 00 1E 00 1C 00 1E 00 1E 00 1E 00 1E 00
+        1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1C 00 1E 00 1E 00 78 00 7A 00 7C 00 7E 00 80 00"));
 
-        // // Split at the top
-        // 90 02 92 00 94 00 96 00 98 00 9A 00 9C 00 9E 00 A0 00 A2 00 A4 00 A6 00 A8 00 AA 00 AC 00 AE 00
-        // B0 00 B2 00 B4 00 B6 00 B8 00 BA 00 BC 00 BE 00 18 00 1C 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00
-        // 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1C 00 1E 00 1E 00 78 00 7A 00 7C 00 7E 00 80 00
+        // Split at the top
+        row_count_test(0x1c, 0x9a, 0xd0, &hex!("
+        90 02 92 00 94 00 96 00 98 00 9A 00 9C 00 9E 00 A0 00 A2 00 A4 00 A6 00 A8 00 AA 00 AC 00 AE 00
+        B0 00 B2 00 B4 00 B6 00 B8 00 BA 00 BC 00 BE 00 18 00 1C 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00
+        1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1C 00 1E 00 1E 00 78 00 7A 00 7C 00 7E 00 80 00"));
 
         // 36/48
         // 78/9A
-        // 22 04 24 00 26 00 28 00 2A 00 2C 00 2E 00 30 00 32 00 34 00 36 00 38 00 3A 00 3C 00 3E 00 40 00
-        // 42 00 44 00 46 00 48 00 4A 00 4C 00 4E 00 50 00 16 00 90 02 92 00 94 00 96 00 98 00 9A 00 9C 00
-        // 9E 00 A0 00 A2 00 A4 00 A6 00 A8 00 AA 00 AC 00 AE 00 B0 00 18 00 1E 00 1C 00 1E 00 1E 00 1E 00
+        row_count_test(0x1c, 0x9a, 0x78, &hex!("
+        22 04 24 00 26 00 28 00 2A 00 2C 00 2E 00 30 00 32 00 34 00 36 00 38 00 3A 00 3C 00 3E 00 40 00
+        42 00 44 00 46 00 48 00 4A 00 4C 00 4E 00 50 00 16 00 90 02 92 00 94 00 96 00 98 00 9A 00 9C 00
+        9E 00 A0 00 A2 00 A4 00 A6 00 A8 00 AA 00 AC 00 AE 00 B0 00 18 00 1E 00 1C 00 1E 00 1E 00 1E 00"));
 
-        // 22 04 24 00 26 00 28 00 2A 00 2C 00 2E 00 30 00 32 00 34 00 36 00 38 00 3A 00 3C 00 3E 00 40 00
-        // 42 00 44 00 46 00 48 00 4A 00 4C 00 4E 00 16 00 90 02 92 00 94 00 96 00 98 00 9A 00 9C 00 9E 00
-        // A0 00 A2 00 A4 00 A6 00 A8 00 AA 00 AC 00 AE 00 B0 00 B2 00 B4 00 18 00 1C 00 1E 00 1E 00 1E 00
+        row_count_test(0x1c, 0x9a, 0x78, &hex!("
+        22 04 24 00 26 00 28 00 2A 00 2C 00 2E 00 30 00 32 00 34 00 36 00 38 00 3A 00 3C 00 3E 00 40 00
+        42 00 44 00 46 00 48 00 4A 00 4C 00 4E 00 50 00 16 00 90 02 92 00 94 00 96 00 98 00 9A 00 9C 00
+        9E 00 A0 00 A2 00 A4 00 A6 00 A8 00 AA 00 AC 00 AE 00 B0 00 18 00 1E 00 1C 00 1E 00 1E 00 1E 00"));
 
-        // 22 04 24 00 26 00 28 00 2A 00 2C 00 2E 00 30 00 32 00 34 00 36 00 38 00 3A 00 3C 00 3E 00 40 00
-        // 42 00 44 00 46 00 48 00 4A 00 4C 00 16 00 90 02 92 00 94 00 96 00 98 00 9A 00 9C 00 9E 00 A0 00
-        // A2 00 A4 00 A6 00 A8 00 AA 00 AC 00 AE 00 B0 00 B2 00 B4 00 B6 00 18 00 1E 00 1C 00 1E 00 1E 00
+        row_count_test(0x1c, 0x9a, 0x78, &hex!("
+        22 04 24 00 26 00 28 00 2A 00 2C 00 2E 00 30 00 32 00 34 00 36 00 38 00 3A 00 3C 00 3E 00 40 00
+        42 00 44 00 46 00 48 00 4A 00 4C 00 4E 00 16 00 90 02 92 00 94 00 96 00 98 00 9A 00 9C 00 9E 00
+        A0 00 A2 00 A4 00 A6 00 A8 00 AA 00 AC 00 AE 00 B0 00 B2 00 B4 00 18 00 1C 00 1E 00 1E 00 1E 00"));
 
-        // 22 04 24 00 26 00 28 00 2A 00 2C 00 2E 00 30 00 32 00 34 00 36 00 38 00 3A 00 3C 00 3E 00 40 00
-        // 42 00 44 00 46 00 48 00 4A 00 16 00 90 02 92 00 94 00 96 00 98 00 9A 00 9C 00 9E 00 A0 00 A2 00
-        // A4 00 A6 00 A8 00 AA 00 AC 00 AE 00 B0 00 B2 00 B4 00 B6 00 B8 00 18 00 1E 00 1C 00 1E 00 1E 00
+        row_count_test(0x1c, 0x9a, 0x78, &hex!("
+        22 04 24 00 26 00 28 00 2A 00 2C 00 2E 00 30 00 32 00 34 00 36 00 38 00 3A 00 3C 00 3E 00 40 00
+        42 00 44 00 46 00 48 00 4A 00 4C 00 16 00 90 02 92 00 94 00 96 00 98 00 9A 00 9C 00 9E 00 A0 00
+        A2 00 A4 00 A6 00 A8 00 AA 00 AC 00 AE 00 B0 00 B2 00 B4 00 B6 00 18 00 1E 00 1C 00 1E 00 1E 00"));
+
+        row_count_test(0x1c, 0x9a, 0x78, &hex!("
+        22 04 24 00 26 00 28 00 2A 00 2C 00 2E 00 30 00 32 00 34 00 36 00 38 00 3A 00 3C 00 3E 00 40 00
+        42 00 44 00 46 00 48 00 4A 00 16 00 90 02 92 00 94 00 96 00 98 00 9A 00 9C 00 9E 00 A0 00 A2 00
+        A4 00 A6 00 A8 00 AA 00 AC 00 AE 00 B0 00 B2 00 B4 00 B6 00 B8 00 18 00 1E 00 1C 00 1E 00 1E 00"));
     }
 }
