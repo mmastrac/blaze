@@ -182,6 +182,61 @@ impl Mapper {
     }
 }
 
+/// Count the number of rows to display onscreen. Some rows may end up zero-height
+/// because of the status bar handling, but we still consider them for the row count
+/// calculation.
+fn row_count(font_regs: [u8; 2], vram: &[u8]) -> Option<u8> {
+    let r1 = font_regs[0];
+    let r2 = font_regs[1];
+
+    // Vertical refresh
+    if r1 & 0xf0 == 0xf0 || r2 & 0xf0 == 0xf0 {
+        return None;
+    }
+
+    // Short-circuit for a single known row height across both screens
+    // if r1 == r2 {
+    //     match r1 & 0xf0 {
+    //         0xd0 => return Some(26),
+    //         0x90 => return Some(38),
+    //         0x70 => return Some(50),
+    //         _ => {}
+    //     }
+    // }
+
+    let nibble_to_lines = |n| ((n + 15) % 16) + 1;
+
+    let rh1 = nibble_to_lines(r1 & 0x0f);
+    let rc1 = nibble_to_lines((r1 & 0xf0) >> 4);
+    let rh2 = nibble_to_lines(r2 & 0x0f);
+
+    debug_assert!(rh1 > 0 && rh1 <= 16);
+    debug_assert!(rh2 > 0 && rh2 <= 16);
+
+    let mut remaining = VERTICAL_LINES;
+    let mut rh = rh1 as usize;
+    let mut screen = 0;
+    let mut count = 0;
+    for i in 0..50 * 2 {
+        let row_addr = vram[i * 2];
+        let row_attrs = vram[i * 2 + 1];
+        if row_attrs & 0x02 != 0 {
+            screen = 1 - screen;
+            rh = rh2 as usize;
+        }
+        count += 1;
+        remaining = remaining.saturating_sub(rh);
+        eprintln!("{count}: {row_addr:02X} remaining={remaining}, rh={rh}");
+        if remaining < rc1 as usize {
+            eprintln!("{count}: {remaining} <= {rc1}");
+            return Some(count);
+        }
+    }
+
+    // Something went wrong, return None
+    None
+}
+
 /// Row VRAM data:
 ///
 /// - Byte 0: Row address (shifted left by 1). Lower bit use unknown.
@@ -643,5 +698,76 @@ mod tests {
             let result = calculate_7ff6_read(mapper3, mapper4, &vram);
             assert_eq!(result, EXPECTED_2[i], "vram = {:02X?}", vram);
         }
+    }
+
+    #[test]
+    fn test_row_count() {
+        #[track_caller]
+        fn row_count_test(status_row: u8, f1: u8, f2: u8, rows: &[u8]) {
+            let result = row_count([f1, f2], rows).unwrap() as usize;
+            let expected = rows.iter().position(|&x| x == status_row).unwrap() / 2 + 1;
+            assert_eq!(result, expected, "Counted {result} but expected {expected}");
+        }
+
+        // Diagnostics: D0/D0
+        row_count_test(0x3c, 0xd0, 0xd0, &hex!("
+        02 00 04 00 08 00 10 00 0A 00 20 00 40 00 80 00 A0 00 E0 00 22 00 44 00 88 00 54 00 AA 00 06 00
+        0C 00 18 00 30 00 60 00 C0 00 0E 00 1C 00 38 02 70 00 1E 00 3C 00 00 00 00 00 00 00 00 00 00 00"));
+
+        // One session, 36 lines, with page size smaller than screen size
+        row_count_test(0x1c, 0x9a, 0x9a, &hex!("
+        22 04 24 00 26 00 28 00 2A 00 2C 00 2E 00 30 00 32 00 34 00 36 00 38 00 3A 00 3C 00 3E 00 40 00 
+        42 00 44 00 46 00 48 00 4A 00 4C 00 4E 00 50 00 16 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 
+        1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1C 00 1E 00 1E 00 78 00 7A 00 7C 00 7E 00 80 00"));
+
+        // Two sessions, top 36 lines, bottom 25 lines, split approximately in half (initial split)
+        row_count_test(0x1c, 0x9a, 0xd0, &hex!("
+        22 04 24 00 26 00 28 00 2A 00 2C 00 2E 00 30 00 32 00 34 00 36 00 38 00 3A 00 3C 00 3E 00 40 00
+        42 00 44 00 46 00 16 00 90 02 92 00 94 00 96 00 98 00 9A 00 9C 00 9E 00 A0 00 A2 00 A4 00 18 00
+        1E 00 1C 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1C 00 1E 00 1E 00 78 00 7A 00 7C 00 7E 00 80 00"));
+
+        // Move split down
+        row_count_test(0x1c, 0x9a, 0xd0, &hex!("
+        22 04 24 00 26 00 28 00 2A 00 2C 00 2E 00 30 00 32 00 34 00 36 00 38 00 3A 00 3C 00 3E 00 40 00
+        42 00 44 00 46 00 48 00 4A 00 16 00 90 02 92 00 94 00 96 00 98 00 9A 00 9C 00 9E 00 A0 00 A2 00
+        18 00 1E 00 1C 00 1E 00 1E 00 1E 00 1E 00 1E 00 1C 00 1E 00 1E 00 78 00 7A 00 7C 00 7E 00 80 00"));
+
+        // // Move split down twice
+        // 22 04 24 00 26 00 28 00 2A 00 2C 00 2E 00 30 00 32 00 34 00 36 00 38 00 3A 00 3C 00 3E 00 40 00
+        // 42 00 44 00 46 00 48 00 4A 00 4C 00 4E 00 16 00 90 02 92 00 94 00 96 00 98 00 9A 00 9C 00 9E 00
+        // A0 00 18 00 1C 00 1E 00 1E 00 1E 00 1E 00 1E 00 1C 00 1E 00 1E 00 78 00 7A 00 7C 00 7E 00 80 00
+
+        // // Move split down thrice
+        // 22 04 24 00 26 00 28 00 2A 00 2C 00 2E 00 30 00 32 00 34 00 36 00 38 00 3A 00 3C 00 3E 00 40 00
+        // 42 00 44 00 46 00 48 00 4A 00 4C 00 4E 00 50 00 16 00 90 02 92 00 94 00 96 00 98 00 9A 00 9C 00
+        // 9E 00 18 00 1E 00 1C 00 1E 00 1E 00 1E 00 1E 00 1C 00 1E 00 1E 00 78 00 7A 00 7C 00 7E 00 80 00
+
+        // // Split near the top
+        // 22 04 24 00 26 00 16 00 90 02 92 00 94 00 96 00 98 00 9A 00 9C 00 9E 00 A0 00 A2 00 A4 00 A6 00
+        // A8 00 AA 00 AC 00 AE 00 B0 00 B2 00 B4 00 B6 00 B8 00 18 00 1E 00 1C 00 1E 00 1E 00 1E 00 1E 00
+        // 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1C 00 1E 00 1E 00 78 00 7A 00 7C 00 7E 00 80 00
+
+        // // Split at the top
+        // 90 02 92 00 94 00 96 00 98 00 9A 00 9C 00 9E 00 A0 00 A2 00 A4 00 A6 00 A8 00 AA 00 AC 00 AE 00
+        // B0 00 B2 00 B4 00 B6 00 B8 00 BA 00 BC 00 BE 00 18 00 1C 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00
+        // 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1C 00 1E 00 1E 00 78 00 7A 00 7C 00 7E 00 80 00
+
+        // 36/48
+        // 78/9A
+        // 22 04 24 00 26 00 28 00 2A 00 2C 00 2E 00 30 00 32 00 34 00 36 00 38 00 3A 00 3C 00 3E 00 40 00
+        // 42 00 44 00 46 00 48 00 4A 00 4C 00 4E 00 50 00 16 00 90 02 92 00 94 00 96 00 98 00 9A 00 9C 00
+        // 9E 00 A0 00 A2 00 A4 00 A6 00 A8 00 AA 00 AC 00 AE 00 B0 00 18 00 1E 00 1C 00 1E 00 1E 00 1E 00
+
+        // 22 04 24 00 26 00 28 00 2A 00 2C 00 2E 00 30 00 32 00 34 00 36 00 38 00 3A 00 3C 00 3E 00 40 00
+        // 42 00 44 00 46 00 48 00 4A 00 4C 00 4E 00 16 00 90 02 92 00 94 00 96 00 98 00 9A 00 9C 00 9E 00
+        // A0 00 A2 00 A4 00 A6 00 A8 00 AA 00 AC 00 AE 00 B0 00 B2 00 B4 00 18 00 1C 00 1E 00 1E 00 1E 00
+
+        // 22 04 24 00 26 00 28 00 2A 00 2C 00 2E 00 30 00 32 00 34 00 36 00 38 00 3A 00 3C 00 3E 00 40 00
+        // 42 00 44 00 46 00 48 00 4A 00 4C 00 16 00 90 02 92 00 94 00 96 00 98 00 9A 00 9C 00 9E 00 A0 00
+        // A2 00 A4 00 A6 00 A8 00 AA 00 AC 00 AE 00 B0 00 B2 00 B4 00 B6 00 18 00 1E 00 1C 00 1E 00 1E 00
+
+        // 22 04 24 00 26 00 28 00 2A 00 2C 00 2E 00 30 00 32 00 34 00 36 00 38 00 3A 00 3C 00 3E 00 40 00
+        // 42 00 44 00 46 00 48 00 4A 00 16 00 90 02 92 00 94 00 96 00 98 00 9A 00 9C 00 9E 00 A0 00 A2 00
+        // A4 00 A6 00 A8 00 AA 00 AC 00 AE 00 B0 00 B2 00 B4 00 B6 00 B8 00 18 00 1E 00 1C 00 1E 00 1E 00
     }
 }

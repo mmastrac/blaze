@@ -83,7 +83,8 @@ impl VideoProcessor {
         Self {
             p1: 0b1111_1111,
             // Bit 0-3: 0 for rotation disable, 1 for rotation enable
-            // Bit 6: 1 for enable 232/423 select (ie: mux to 423)
+            // Bit 5: 1 for enable 232/423 select (ie: mux to 423)
+            // Bit 6: disable 232/423 select + keyboard
             p1_read: 0b1111_1111,
             p2: 0xff,
             p3: 0xff,
@@ -97,6 +98,9 @@ impl VideoProcessor {
         let csync_low = self.sync.sync_gen.borrow_mut().tick();
         self.p3_read &= !(1 << 4);
         self.p3_read |= (csync_low as u8) << 4;
+
+        // This appears to trigger a write to 7ff0's 0x40 bit in the 2E- firmware
+        // self.p1_read ^= 1 << 7;
     }
 }
 

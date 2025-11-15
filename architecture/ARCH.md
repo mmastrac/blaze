@@ -144,17 +144,16 @@ Output:
     - 78: 50 lines (0111_1000)
     - 9A: 38 lines (1001_1010)
     - D0: 26 lines (1101_0000)
-    - F0/FC: (set during vsync: 1111_????, F0 = 24 lines, FC = other)
+    - F0/FC: (set during vsync based on screen 2 height register: 1111_????, F0 = 24 lines, FC = other)
 
  - 0x7ff7/0x7ff8: screen offset (x/y), default 0x1e for each
     - x: 0x0a -> 0x32 (20px)
     - y: 0x01 -> 0x3b (60px)
 
- - 0x7ff9: 0
- - 0x7ffa: 0x35? (53)
- - 0x7ffb: 0
- - 0x7ffc: font offset for screen, 0x2 for 132 char
-
+ - 0x7ff9: 0 (written twice)
+ - 0x7ffa: 0x35? (53) - seems like the max # of rows to process in the chargen, written twice
+ - 0x7ffb: 0 (written twice)
+ - 0x7ffc: font offset for screen, 0x2 for 132 char (written twice)
 
 ## Video Timing
 
@@ -163,8 +162,8 @@ Output:
 
 ## Video RAM Layout
 
- - 0x0000-0x1fff: Screen 0
- - 0x2000-0x3fff: Screen 1
+ - 0x0000-0x00ff: Row layout for screen
+
 
 ## Video RAM
 

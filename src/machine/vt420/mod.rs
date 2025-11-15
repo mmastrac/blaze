@@ -194,13 +194,14 @@ impl System {
         if let Some(demo_comm) = &mut self.demo_comm {
             demo_comm.tick();
         }
-        let dtr_a = self.memory.duart.output_bits_inv & (1 << 1) != 0;
-        let dtr_b = self.memory.duart.output_bits_inv & (1 << 7) != 0;
+        // Set DTR if either DTR1 or DTR2 is set (ideally this should gate on the 232/423 select pin)
+        let dtr_a = !self.memory.duart.output_bits_inv & 0b1010 != 0b1010;
+        let dtr_b = !self.memory.duart.output_bits_inv & (1 << 7) == 0;
         if self.dtr_a.replace(dtr_a) != dtr_a {
-            trace!("DUART pipe A DTR changed to {}", self.dtr_a.get());
+            info!("DUART pipe A DTR changed to {}", self.dtr_a.get());
         }
         if self.dtr_b.replace(dtr_b) != dtr_b {
-            trace!("DUART pipe B DTR changed to {}", self.dtr_b.get());
+            info!("DUART pipe B DTR changed to {}", self.dtr_b.get());
         }
         self.video_row.tick();
         let tick = self.timer.prepare_tick(cpu, self);

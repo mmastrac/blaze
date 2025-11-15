@@ -36,13 +36,13 @@ Textual UI:
 
 ```
 # Run the emulator with a graphical display and comm1/2 in loopback mode
-cargo run --all-features --release -- --rom roms/vt420/23-068E9-00.bin --display=graphics
+cargo run --all-features --release -- --display=graphics
 
 # Run the emulator with a graphical display and comm1 connected to "/bin/sh"
-cargo run --all-features --release -- --rom roms/vt420/23-068E9-00.bin --display=graphics --comm1-exec "/bin/sh"
+cargo run --all-features --release -- --display=graphics --comm1-exec "/bin/sh"
 
 # Run the emulator with a text display and comm1 connected to "/bin/sh"
-cargo run --all-features --release -- --rom roms/vt420/23-068E9-00.bin --display=text --comm1-exec "/bin/sh"
+cargo run --all-features --release -- --display=text --comm1-exec "/bin/sh"
 
 # Run the emulator in WASM and display the video output in a browser
 cargo run-wasm --bin blaze-vt --no-default-features --features=wasm --release
