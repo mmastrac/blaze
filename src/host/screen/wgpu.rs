@@ -63,6 +63,11 @@ impl WgpuRender {
                         }
                     }
                 }
+
+                if render.row_flags.status_row {
+                    render.row = 400;
+                    render.row_offset = 800 * 4 * render.row;
+                }
             },
             |render, column, c, attr| {
                 let c = c as usize | ((((attr >> 2) & 0x01) as usize) << 8);

@@ -59,10 +59,19 @@ impl<'a> Widget for Screen<'a> {
             return;
         };
 
-        for row_idx in 0..rows as u16 {
+        for mut row_idx in 0..=rows as u16 {
             let row = ((vram[vram_base + row_idx as usize * 2] as u16) >> 1) << 8;
             if row == 0 {
                 continue;
+            }
+            // Handle smooth scrolling by chopping the top row
+            if self.mapper.get(2) != 0 {
+                if row_idx as u8 == self.mapper.get(0) {
+                    continue;
+                }
+                if row_idx as u8 > self.mapper.get(0) {
+                    row_idx -= 1;
+                }
             }
             // Bit 2: double width
             // Bit 1: swap between screen 0 and screen 1 attributes

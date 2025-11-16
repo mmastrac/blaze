@@ -119,54 +119,13 @@ impl Mapper {
     }
 
     pub fn row_count(&self, vram: &[u8]) -> Option<u8> {
-        let r1 = self.get2(6);
-        let r2 = self.get(6);
-
-        // Vertical refresh
-        if r1 & 0xf0 == 0xf0 || r2 & 0xf0 == 0xf0 {
-            return None;
+        let count = row_count([self.mapper2[6], self.mapper[6]], vram)?;
+        // Smooth scrolling adds one row to the count
+        if self.mapper[2] != 0 {
+            Some(count + 1)
+        } else {
+            Some(count)
         }
-
-        // if r1 == r2 {
-        //     return Some(match r1 {
-        //         0xd0 => 26,
-        //         0x9a => 38,
-        //         0x78 => 50,
-        //         _ => 26,
-        //     });
-        // }
-
-        let rh1 = ((r1 & 0x0f) + 15) % 16 + 1;
-        let rh2 = ((r2 & 0x0f) + 15) % 16 + 1;
-
-        debug_assert!(rh1 > 0 && rh1 <= 16);
-        debug_assert!(rh2 > 0 && rh2 <= 16);
-
-        // Look for the row with 0x02 set as the splitter row
-        // Accumulate lines until we hit 414
-
-        let mut remaining = VERTICAL_LINES;
-        let mut screen = 0;
-        let mut count = 0;
-        for i in 0..50 * 2 {
-            let row_attrs = vram[i * 2 + 1];
-            if row_attrs & 0x02 != 0 {
-                screen = 1 - screen;
-            }
-            let rh = if vram[i * 2] == 0x1E {
-                2
-            } else if screen == 0 {
-                rh1
-            } else {
-                rh2
-            };
-            if rh as usize > remaining {
-                return Some(count as u8);
-            }
-            remaining -= rh as usize;
-            count += 1;
-        }
-        Some(count)
     }
 
     pub fn is_blink(&self) -> bool {
@@ -182,9 +141,9 @@ impl Mapper {
     }
 }
 
-/// Count the number of rows to display onscreen. Some rows may end up zero-height
-/// because of the status bar handling, but we still consider them for the row count
-/// calculation.
+/// Count the number of rows to display onscreen. Some rows may end up
+/// zero-height because of the status bar handling, but we still consider them
+/// for the row count calculation.
 fn row_count(font_regs: [u8; 2], vram: &[u8]) -> Option<u8> {
     let r1 = font_regs[0];
     let r2 = font_regs[1];
@@ -195,14 +154,15 @@ fn row_count(font_regs: [u8; 2], vram: &[u8]) -> Option<u8> {
     }
 
     // Short-circuit for a single known row height across both screens
-    // if r1 == r2 {
-    //     match r1 & 0xf0 {
-    //         0xd0 => return Some(26),
-    //         0x90 => return Some(38),
-    //         0x70 => return Some(50),
-    //         _ => {}
-    //     }
-    // }
+    // NOTE: Doesn't handle smooth scrolling registers yet
+    if r1 == r2 {
+        match r1 & 0xf0 {
+            0xd0 => return Some(26),
+            0x90 => return Some(41),
+            0x70 => return Some(51),
+            _ => {}
+        }
+    }
 
     let nibble_to_lines = |n| ((n + 15) % 16) + 1;
 
@@ -217,7 +177,6 @@ fn row_count(font_regs: [u8; 2], vram: &[u8]) -> Option<u8> {
     let mut screen = 0;
     let mut count = 0;
     for i in 0..50 * 2 {
-        let row_addr = vram[i * 2];
         let row_attrs = vram[i * 2 + 1];
         if row_attrs & 0x02 != 0 {
             screen = 1 - screen;
@@ -225,8 +184,13 @@ fn row_count(font_regs: [u8; 2], vram: &[u8]) -> Option<u8> {
         }
         count += 1;
         remaining = remaining.saturating_sub(rh);
-        eprintln!("{count}: {row_addr:02X} remaining={remaining}, rh={rh}");
+        #[cfg(test)]
+        eprintln!(
+            "{count}: {row_addr:02X} remaining={remaining}, rh={rh}",
+            row_addr = vram[i * 2]
+        );
         if remaining == 0 {
+            #[cfg(test)]
             eprintln!("{count}: {remaining} = 0");
             return Some(count + 1);
         }
@@ -278,12 +242,6 @@ impl Row {
     pub fn is_invalid(&self) -> bool {
         self.0 == 0
     }
-
-    /// This is not correct, but works for now
-    #[inline(always)]
-    pub fn is_status_row(&self) -> bool {
-        self.0 == 0x1C || self.0 == 0x1E
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -302,8 +260,10 @@ pub struct RowFlags {
 struct Cell(u8, u8, u8);
 
 /// Decode the VRAM into a grid of characters and attributes.
-/// The row_callback is called for each row, with the row index and the row attributes.
-/// The column_callback is called for each column, with the column, display character and its attributes.
+///
+/// The `row_callback` is called for each row, with the row index and the row
+/// attributes. The `column_callback` is called for each column, with the
+/// column, display character and its attributes.
 #[inline(always)]
 pub fn decode_vram<T>(
     vram: &[u8],
@@ -322,7 +282,7 @@ pub fn decode_vram<T>(
     let mut attr = [0_u8; 256];
     let mut screen_2 = mapper.is_screen_2();
 
-    for row_idx in 0..rows as u16 {
+    for row_idx in 0..=rows as u16 {
         let row = Row(
             vram[vram_base + row_idx as usize * 2],
             vram[vram_base + row_idx as usize * 2 + 1],
@@ -335,7 +295,9 @@ pub fn decode_vram<T>(
             screen_2 = !screen_2;
         }
 
-        let font = if screen_2 && !row.is_status_row() {
+        let status_row = row_idx as u8 == rows - 1;
+
+        let font = if screen_2 {
             mapper.get(0xc)
         } else {
             mapper.get2(0xc)
@@ -348,10 +310,18 @@ pub fn decode_vram<T>(
         };
 
         let mut font = (font & 0xf0) * 0x80;
-        if row.is_status_row() {
-            is_132 = true;
+        if status_row {
+            if !is_132 {
+                is_132 = true;
+            }
         } else if is_132 {
             font += 16;
+        };
+
+        let row_height = if screen_2 {
+            mapper.row_height_screen_2()
+        } else {
+            mapper.row_height_screen_1()
         };
 
         let row_flags = RowFlags {
@@ -365,12 +335,8 @@ pub fn decode_vram<T>(
             double_width: !row.is_single_width(),
             double_height_top: row.is_double_height_top(),
             double_height_bottom: row.is_double_height_bottom(),
-            status_row: row.is_status_row(),
-            row_height: if screen_2 {
-                mapper.row_height_screen_2()
-            } else {
-                mapper.row_height_screen_1()
-            },
+            status_row,
+            row_height,
             font,
         };
         row_callback(&mut data, row_idx as u8, row, row_flags);
@@ -706,6 +672,7 @@ mod tests {
             let result = row_count([f1, f2], rows).unwrap() as usize;
             let expected = rows.iter().position(|&x| x == status_row).unwrap() / 2 + 1;
             assert_eq!(result, expected, "Counted {result} but expected {expected}");
+            assert_eq!(rows[result * 2 - 2], status_row);
         }
 
         // Diagnostics: D0/D0
