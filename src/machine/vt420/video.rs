@@ -309,19 +309,23 @@ pub fn decode_vram<T>(
             mapper.screen_1_132_columns()
         };
 
+        let mut row_height = if screen_2 {
+            mapper.row_height_screen_2()
+        } else {
+            mapper.row_height_screen_1()
+        };
+
         let mut font = (font & 0xf0) * 0x80;
         if status_row {
             if !is_132 {
                 is_132 = true;
             }
+            // Special case for the status bar: the ROM normally clamps this to
+            // 12 rows in 36/48 row mode by setting a timer to fire on line 400,
+            // but we force it to 16 in all modes.
+            row_height = 16;
         } else if is_132 {
             font += 16;
-        };
-
-        let row_height = if screen_2 {
-            mapper.row_height_screen_2()
-        } else {
-            mapper.row_height_screen_1()
         };
 
         let row_flags = RowFlags {
