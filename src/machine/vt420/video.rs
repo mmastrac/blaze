@@ -5,7 +5,7 @@
 
 use crate::machine::generic::vsync::Timing;
 use hex_literal::hex;
-use tracing::trace;
+use tracing::{info, trace};
 
 /// The number of vertical lines expected by the ROM
 pub const VERTICAL_LINES: usize = 417;
@@ -50,6 +50,23 @@ impl Mapper {
     }
 
     pub fn set(&mut self, offset: u8, value: u8) {
+        if (3..=5).contains(&offset) {
+            let changed = self.mapper[offset as usize] ^ value;
+            let strange_bits = match offset {
+                3 => 0b1000_0000,
+                4 => 0b1110_1100,
+                5 => 0b1101_1011,
+                _ => 0,
+            };
+            if changed & strange_bits != 0 {
+                let changed = changed & strange_bits;
+                info!(
+                    "VIDEO: Strange bits {changed:08b} in 7ff{offset} changed: {:02X} -> {:02X}",
+                    self.mapper[offset as usize], value
+                );
+            }
+        }
+
         self.mapper2[offset as usize] = self.mapper[offset as usize];
         self.mapper[offset as usize] = value;
     }
@@ -454,9 +471,9 @@ pub fn decode_font(vram: &[u8], address: u32, is_80: bool, char: &mut [u16; 16])
 /// rather than computing what they should be.
 fn calculate_7ff6_read(a: u8, b: u8, vram: &[u8]) -> u8 {
     const C: [u8; 16] = [
-        0x0b, 0x0b, 0x0b, 0x0d, // section 1a (80)
+        0x0b, 0x0b, 0x0b, 0x0d, // section 1a (80, no invert)
         0x0b, 0x04, 0x0b, 0x0d, // section 1b (80)
-        0x03, 0x03, 0x03, 0x0d, // section 2a (132)
+        0x03, 0x03, 0x03, 0x0d, // section 2a (132, no invert)
         0x03, 0x01, 0x03, 0x0d, // section 2b (132)
     ];
 
@@ -464,7 +481,7 @@ fn calculate_7ff6_read(a: u8, b: u8, vram: &[u8]) -> u8 {
     let x = if c4 { b } else { a };
 
     let c0 = (b & 0b0000_1000) != 0; // ?
-    let c1 = (a & 0b0100_0000) != 0; // ?
+    let c1 = (a & 0b0100_0000) != 0; // this is likely a VRAM page?
     let c2 = (x & 0b0000_0010) != 0; // invert
     let c3 = (x & 0b0000_0001) != 0; // 80/132
 
