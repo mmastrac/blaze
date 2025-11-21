@@ -53,7 +53,7 @@ impl Mapper {
         if (3..=5).contains(&offset) {
             let changed = self.mapper[offset as usize] ^ value;
             let strange_bits = match offset {
-                3 => 0b1010_0000,
+                3 => 0b1000_0000,
                 4 => 0b1110_1100,
                 5 => 0b1101_1011,
                 _ => 0,
@@ -151,10 +151,6 @@ impl Mapper {
         } else {
             Some(count)
         }
-    }
-
-    pub fn is_blink(&self) -> bool {
-        self.get(3) & 0x40 != 0
     }
 
     pub fn read_7ff6(&self, vram: &[u8]) -> u8 {
@@ -307,7 +303,7 @@ pub fn decode_vram<T>(
     let mut attr = [0_u8; 256];
     let mut screen_2 = mapper.is_screen_2();
 
-    for row_idx in 0..=rows as u16 {
+    for row_idx in 0..rows as u16 {
         let row = Row(
             vram[vram_base + row_idx as usize * 2],
             vram[vram_base + row_idx as usize * 2 + 1],
@@ -346,9 +342,13 @@ pub fn decode_vram<T>(
                 is_132 = true;
             }
             // Special case for the status bar: the ROM normally clamps this to
-            // 12 rows in 36/48 row mode by setting a timer to fire on line 400,
-            // but we force it to 16 in all modes.
-            row_height = 16;
+            // 12 rows in 36/48 row mode by setting a timer to fire on line 400.
+            // We just hardcode this check because we don't necessarily fire
+            // that time interrupt at the right time. We also force the font to
+            // the 24-line one. This could use some confirmation with real
+            // hardware.
+            font = 0;
+            row_height = if row_height != 16 { 12 } else { 16 };
         } else if is_132 {
             font += 16;
         };
@@ -489,7 +489,7 @@ fn calculate_7ff6_read(a: u8, b: u8, vram: &[u8]) -> u8 {
     let x = if c4 { b } else { a };
 
     let c0 = (b & 0b0000_1000) != 0; // ?
-    let c1 = (a & 0b0100_0000) != 0; // this is likely a VRAM page?
+    let c1 = (a & 0b0100_0000) != 0; // chargen disable
     let c2 = (x & 0b0000_0010) != 0; // invert
     let c3 = (x & 0b0000_0001) != 0; // 80/132
 
@@ -709,6 +709,11 @@ mod tests {
         02 00 04 00 08 00 10 00 0A 00 20 00 40 00 80 00 A0 00 E0 00 22 00 44 00 88 00 54 00 AA 00 06 00
         0C 00 18 00 30 00 60 00 C0 00 0E 00 1C 00 38 02 70 00 1E 00 3C 00 00 00 00 00 00 00 00 00 00 00"));
 
+        // One session, 25 lines, status bar
+        row_count_test(0x1c, 0xd0, 0xd0, &hex!("
+        22 00 24 00 26 00 28 00 2a 00 2c 00 2e 00 30 00 32 00 34 00 36 00 38 00 3a 00 3c 00 3e 00 40 00
+        42 00 44 00 46 00 48 00 4a 00 4c 00 4e 00 50 00 16 00 1c 00 1e 00 1e 00 5a 00 5c 00 5e 00 60 00"));
+
         // One session, 36 lines, with page size smaller than screen size, no status bar
         row_count_test(0x1c, 0x9a, 0x9a, &hex!("
         22 04 24 00 26 00 28 00 2A 00 2C 00 2E 00 30 00 32 00 34 00 36 00 38 00 3A 00 3C 00 3E 00 40 00 
@@ -727,6 +732,13 @@ mod tests {
         42 00 44 00 46 00 48 00 4A 00 4C 00 4E 00 50 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 
         1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 1E 00 
         1E 00 1E 00 1C 00 1E 00 1E 00 00 00 00 00 00 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00 00 00 "));
+
+        // One session, 48 lines and status bar
+        row_count_test(0x1c, 0x78, 0x78, &hex!("
+        2c 00 2e 00 30 00 32 00 28 00 36 00 78 00 60 00 74 00 5e 00 48 00 4a 00 4c 00 6a 00 3c 00 3e 00
+        40 00 42 00 44 00 46 00 22 00 20 00 7c 00 7a 00 76 00 7e 00 80 00 82 00 84 00 70 00 88 00 72 00
+        6c 00 6e 00 68 00 58 00 34 00 62 00 38 00 3a 00 64 00 66 00 4e 00 50 00 52 00 54 00 56 00 24 00
+        26 00 16 00 1c 00 1e 00 1e 00 35 7c 00 00 01 48"));
 
         // Two sessions, top 36 lines, bottom 25 lines, split approximately in half (initial split)
         row_count_test(0x1c, 0x9a, 0xd0, &hex!("

@@ -10,6 +10,7 @@ use ratatui::crossterm;
 use ratatui::crossterm::event::KeyModifiers;
 use tracing::info;
 
+use crate::machine::generic::color::DEFAULT_COLOR;
 use crate::{
     System,
     machine::vt420::video::{RowFlags, decode_font, decode_vram},
@@ -52,25 +53,25 @@ impl WgpuRender {
             |render, row, attr, row_flags| {
                 render.row += render.row_flags.row_height as usize;
                 render.row_offset += 800 * 4 * render.row_flags.row_height as usize;
-
                 render.row_flags = row_flags;
+
                 render.start_row = 0;
-                if render.smooth.2 != 0 {
-                    if (render.smooth.0..=render.smooth.1).contains(&row) {
-                        if row == render.smooth.0 {
-                            render.start_row = render.smooth.2 as usize;
-                            render.row_flags.row_height =
-                                render.row_flags.row_height - render.smooth.2;
-                        } else if row == render.smooth.1 {
-                            //render.start_row += 1;
-                            render.row_flags.row_height = render.smooth.2;
-                        }
-                    }
-                }
 
                 if render.row_flags.status_row {
                     render.row = 400;
                     render.row_offset = 800 * 4 * render.row;
+                } else {
+                    if render.smooth.2 != 0 {
+                        if (render.smooth.0..=render.smooth.1).contains(&row) {
+                            if row == render.smooth.0 {
+                                render.start_row = render.smooth.2 as usize;
+                                render.row_flags.row_height =
+                                    render.row_flags.row_height - render.smooth.2;
+                            } else if row == render.smooth.1 {
+                                render.row_flags.row_height = render.smooth.2;
+                            }
+                        }
+                    }
                 }
             },
             |render, column, c, attr| {
@@ -85,9 +86,13 @@ impl WgpuRender {
                 let bold = attr & 0x08 != 0;
                 let underline = attr & 1 != 0;
                 let color = if render.chargen_disabled && !render.row_flags.status_row {
-                    0x00
+                    DEFAULT_COLOR.background
                 } else {
-                    if bold { 0xff } else { 0x80 }
+                    if bold {
+                        DEFAULT_COLOR.bold
+                    } else {
+                        DEFAULT_COLOR.foreground
+                    }
                 };
                 let font_address_base = c * 16 + 0x8000 + render.row_flags.font as usize;
                 decode_font(
@@ -99,7 +104,7 @@ impl WgpuRender {
                 let width = if render.row_flags.is_80 { 10 } else { 6 };
                 let mut offset = render.row_offset;
                 for mut y in 0..render.row_flags.row_height as usize {
-                    if render.row + y >= 416 {
+                    if render.row + y >= 430 {
                         break;
                     }
                     if c == 0 && !render.row_flags.is_80 {
@@ -128,15 +133,15 @@ impl WgpuRender {
                             let color = if pixel ^ render.row_flags.invert {
                                 color
                             } else {
-                                0x00
+                                DEFAULT_COLOR.background
                             };
-                            render.frame[offset + x_offset] = color;
-                            render.frame[offset + x_offset + 1] = color;
-                            render.frame[offset + x_offset + 2] = color;
+                            render.frame[offset + x_offset] = color.0;
+                            render.frame[offset + x_offset + 1] = color.1;
+                            render.frame[offset + x_offset + 2] = color.2;
                             render.frame[offset + x_offset + 3] = 0xff;
-                            render.frame[offset + x_offset + 4] = color;
-                            render.frame[offset + x_offset + 5] = color;
-                            render.frame[offset + x_offset + 6] = color;
+                            render.frame[offset + x_offset + 4] = color.0;
+                            render.frame[offset + x_offset + 5] = color.1;
+                            render.frame[offset + x_offset + 6] = color.2;
                             render.frame[offset + x_offset + 7] = 0xff;
                         }
                     } else {
@@ -152,11 +157,11 @@ impl WgpuRender {
                             let color = if pixel ^ render.row_flags.invert {
                                 color
                             } else {
-                                0x00
+                                DEFAULT_COLOR.background
                             };
-                            render.frame[offset + x_offset] = color;
-                            render.frame[offset + x_offset + 1] = color;
-                            render.frame[offset + x_offset + 2] = color;
+                            render.frame[offset + x_offset] = color.0;
+                            render.frame[offset + x_offset + 1] = color.1;
+                            render.frame[offset + x_offset + 2] = color.2;
                             render.frame[offset + x_offset + 3] = 0xff;
                         }
                     }
@@ -167,9 +172,9 @@ impl WgpuRender {
         );
 
         // Stopgap to fix the leftover pixels at the end of the frame
-        if render.row_offset < render.frame.len() {
-            render.frame[render.row_offset..].fill(0);
-        }
+        // if render.row_offset < render.frame.len() {
+        //     render.frame[render.row_offset..].fill(0);
+        // }
     }
 }
 
