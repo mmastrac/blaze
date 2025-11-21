@@ -7,6 +7,7 @@ use i8051::Cpu;
 use i8051_debug_tui::{Debugger, DebuggerState};
 #[cfg(feature = "tui")]
 use ratatui::crossterm;
+#[cfg(feature = "tui")]
 use ratatui::crossterm::event::KeyModifiers;
 use tracing::info;
 
