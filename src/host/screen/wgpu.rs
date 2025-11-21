@@ -42,7 +42,7 @@ impl WgpuRender {
                 system.memory.mapper.get(2),
             ),
             frame,
-            chargen_disabled: system.memory.mapper.disable_chargen() == 1,
+            chargen_disabled: system.memory.mapper.disable_chargen(),
             ..Default::default()
         };
         let mut font = [0_u16; 16];
@@ -190,8 +190,15 @@ pub fn run(
     let system_clone = system.clone();
     let stepper = move || {
         let mut system = system_clone.borrow_mut();
-        for _ in 0..20000 {
-            system.step(&mut cpu);
+        if system.memory.mapper.disable_chargen() {
+            // Run way faster if the chargen is disabled
+            for _ in 0..100000 {
+                system.step(&mut cpu);
+            }
+        } else {
+            for _ in 0..20000 {
+                system.step(&mut cpu);
+            }
         }
         while system.memory.mapper.is_status_bar_phase() {
             system.step(&mut cpu);

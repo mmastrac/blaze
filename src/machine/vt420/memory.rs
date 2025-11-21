@@ -349,17 +349,6 @@ impl MemoryMapper for RAM {
                     self.mapper.get(offset as _),
                     value
                 );
-                if offset == 0x3
-                    && self.mapper.disable_chargen() ^ self.mapper.disable_chargen_value(value) != 0
-                {
-                    let old = self.mapper.disable_chargen();
-                    let new = self.mapper.disable_chargen_value(value);
-                    debug!("VIDEO: VRAM page changed: {} -> {}", old, new);
-                    // if old == 1 && new == 0 {
-                    //     let font = &self.vram[0..];
-                    //     std::fs::write("/tmp/font.bin", font).unwrap();
-                    // }
-                }
 
                 if offset == 0x5 {
                     debug!("Memory mapper bank write: {:02X}", value);

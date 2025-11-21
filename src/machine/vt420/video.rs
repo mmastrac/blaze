@@ -95,8 +95,8 @@ impl Mapper {
         0
     }
 
-    pub fn disable_chargen(&self) -> u32 {
-        self.disable_chargen_value(self.mapper[3])
+    pub fn disable_chargen(&self) -> bool {
+        self.disable_chargen_value(self.mapper[3]) == 1
     }
 
     pub fn disable_chargen_value(&self, value: u8) -> u32 {
