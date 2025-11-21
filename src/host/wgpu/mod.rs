@@ -1,8 +1,8 @@
 #![deny(clippy::all)]
 #![forbid(unsafe_code)]
 
-const WIDTH: u32 = 800;
-const HEIGHT: u32 = 430;
+pub const WIDTH: u32 = 800;
+pub const HEIGHT: u32 = 416;
 const FPS: u32 = 60;
 const TIME_STEP: Duration = Duration::from_micros(1_000_000 / FPS as u64);
 
