@@ -75,25 +75,36 @@ impl WgpuRender {
                 }
             },
             |render, column, c, attr| {
-                let c = c as usize | ((((attr >> 2) & 0x01) as usize) << 8);
+                let c = c as usize;
                 let mut c = c * 2;
                 // The status bar rendering rules are strange...  if bit 0x8 in the main attribute
                 // nibble is not set, we use the normal 132-column font, otherwise we use this as
                 // "direct pointer" to an extended char.
-                if render.row_flags.status_row && attr >> 2 & 0x8 == 0 {
+                if render.row_flags.status_row && !attr.is_upper_bit() {
                     c = c.saturating_add(1);
                 }
-                let bold = attr & 0x08 != 0;
-                let underline = attr & 1 != 0;
+
                 let color = if render.chargen_disabled && !render.row_flags.status_row {
-                    DEFAULT_COLOR.background
+                    [DEFAULT_COLOR.background, DEFAULT_COLOR.background]
                 } else {
-                    if bold {
-                        DEFAULT_COLOR.bold
-                    } else {
-                        DEFAULT_COLOR.foreground
+                    match (render.row_flags.invert, attr.is_bold(), attr.is_reverse()) {
+                        (false, false, false) => {
+                            [DEFAULT_COLOR.background, DEFAULT_COLOR.foreground]
+                        }
+                        (false, false, true) => {
+                            [DEFAULT_COLOR.foreground, DEFAULT_COLOR.background]
+                        }
+                        (false, true, false) => [DEFAULT_COLOR.background, DEFAULT_COLOR.bold],
+                        (false, true, true) => [DEFAULT_COLOR.bold, DEFAULT_COLOR.foreground],
+                        (true, false, false) => {
+                            [DEFAULT_COLOR.foreground, DEFAULT_COLOR.background]
+                        }
+                        (true, false, true) => [DEFAULT_COLOR.background, DEFAULT_COLOR.foreground],
+                        (true, true, false) => [DEFAULT_COLOR.bold, DEFAULT_COLOR.foreground],
+                        (true, true, true) => [DEFAULT_COLOR.background, DEFAULT_COLOR.bold],
                     }
                 };
+
                 let font_address_base = c * 16 + 0x8000 + render.row_flags.font as usize;
                 decode_font(
                     system.memory.vram.as_ref(),
@@ -124,17 +135,11 @@ impl WgpuRender {
                         for x in 0..width {
                             let x_offset = (column as usize * width + x) * 8;
                             let mut pixel = font[y + render.start_row] & (1 << x) != 0;
-                            if underline && y == render.row_flags.row_height as usize - 1 {
+                            if attr.is_underline() && y == render.row_flags.row_height as usize - 1
+                            {
                                 pixel = true;
                             }
-                            if attr & 16 != 0 {
-                                pixel = !pixel;
-                            }
-                            let color = if pixel ^ render.row_flags.invert {
-                                color
-                            } else {
-                                DEFAULT_COLOR.background
-                            };
+                            let color = color[pixel as usize];
                             render.frame[offset + x_offset] = color.0;
                             render.frame[offset + x_offset + 1] = color.1;
                             render.frame[offset + x_offset + 2] = color.2;
@@ -148,17 +153,11 @@ impl WgpuRender {
                         for x in 0..width {
                             let x_offset = (column as usize * width + x) * 4;
                             let mut pixel = font[y + render.start_row] & (1 << x) != 0;
-                            if underline && y == render.row_flags.row_height as usize - 1 {
+                            if attr.is_underline() && y == render.row_flags.row_height as usize - 1
+                            {
                                 pixel = true;
                             }
-                            if attr & 16 != 0 {
-                                pixel = !pixel;
-                            }
-                            let color = if pixel ^ render.row_flags.invert {
-                                color
-                            } else {
-                                DEFAULT_COLOR.background
-                            };
+                            let color = color[pixel as usize];
                             render.frame[offset + x_offset] = color.0;
                             render.frame[offset + x_offset + 1] = color.1;
                             render.frame[offset + x_offset + 2] = color.2;

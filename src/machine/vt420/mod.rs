@@ -232,7 +232,8 @@ impl System {
 
     #[cfg(test)]
     pub(crate) fn dump_screen_text(&self) -> String {
-        use crate::machine::vt420::video::decode_vram;
+        use crate::{host::screen::unicode, machine::vt420::video::decode_vram};
+        use std::fmt::Write;
 
         let text = String::with_capacity(132 * 25);
         decode_vram(
@@ -242,10 +243,10 @@ impl System {
                 text.push_str("\n");
             },
             |text, _col, ch, _attrs| {
-                if ch == 0x00 {
-                    text.push_str(" ");
+                if let Some(c) = unicode::map_char(ch) {
+                    text.push(c)
                 } else {
-                    text.push(ch as char);
+                    write!(text, "<{ch:03X}>").unwrap()
                 }
             },
             text,

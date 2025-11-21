@@ -17,6 +17,8 @@ use i8051::sfr::{SFR_P1, SFR_P2, SFR_P3};
 use tracing::warn;
 
 use crate::host::lk201::crossterm::{CrosstermKeyboard, KeyboardCommand};
+use crate::host::screen::unicode;
+use crate::machine::vt420::video::{RowFlags, decode_vram};
 use crate::{System, machine::vt420::video::Mapper};
 
 pub struct Screen<'a> {
@@ -54,6 +56,76 @@ impl<'a> Widget for Screen<'a> {
 
         let mut line = [0_u16; 256];
         let mut attr = [0_u8; 256];
+
+        #[derive(Default)]
+        struct Render {
+            row_idx: usize,
+            row_flags: RowFlags,
+            smooth_row: u8,
+        }
+
+        let render = Render {
+            smooth_row: if self.mapper.get(2) != 0 {
+                self.mapper.get(0)
+            } else {
+                u8::MAX
+            },
+            ..Default::default()
+        };
+
+        if self.display_mode == DisplayMode::Normal {
+            decode_vram(
+                self.vram,
+                self.mapper,
+                |render, row, attr, row_flags| {
+                    render.row_idx = row as usize;
+                    render.row_flags = row_flags;
+
+                    if row >= render.smooth_row {
+                        render.row_idx -= 1;
+                    }
+                },
+                |render, mut column, mut c, attr| {
+                    let mut style = Style::default();
+                    if attr.is_underline() {
+                        style = style.underlined();
+                    }
+                    if attr.is_bold() {
+                        style = style.bold();
+                    }
+                    if attr.is_reverse() {
+                        style = style.reversed();
+                    }
+
+                    if render.row_flags.double_width {
+                        column *= 2;
+                    }
+
+                    if let Some(cell) = buf.cell_mut((
+                        area.left() + column as u16,
+                        area.top() + render.row_idx as u16,
+                    )) {
+                        if render.row_flags.status_row && attr.is_upper_bit() {
+                            c = c | 0x800;
+                        }
+                        cell.set_char(unicode::map_char(c).unwrap_or('.'));
+                        cell.set_style(style);
+
+                        if render.row_flags.double_width {
+                            if let Some(cell) = buf.cell_mut((
+                                area.left() + column as u16 + 1,
+                                area.top() + render.row_idx as u16,
+                            )) {
+                                cell.set_char(' ');
+                                cell.set_style(style);
+                            }
+                        }
+                    }
+                },
+                render,
+            );
+            return;
+        }
 
         let Some(rows) = self.mapper.row_count(&vram) else {
             return;
@@ -198,87 +270,7 @@ impl<'a> Widget for Screen<'a> {
                         }
                     }
                 }
-                DisplayMode::Normal => {
-                    // Render characters
-                    let mut col = 0;
-                    for i in 0..132.min((area.width - col) as usize) {
-                        let char_code = line[i] & 0xff;
-                        let ch = if line[i] & 0x100 != 0 {
-                            match char_code {
-                                0x9c => 'S',
-                                0x0d => 'H',
-                                0x54 => 'e',
-                                0x09 => 's',
-                                0x52 => 'd',
-                                0x55 => 'i',
-                                0x6d => 'l',
-                                0x7f => 'o',
-                                0x75 => 'n',
-                                0x20 => '1',
-                                0x38 => '2',
-                                _ => '.',
-                            }
-                        } else if char_code == 0 || char_code == 0x98 {
-                            ' '
-                        } else if char_code < 0x20 || char_code > 0x7e {
-                            match char_code {
-                                0x0d => '╭', // unicode box corner
-                                0x0c => '╮', // unicode box corner
-                                0x0e => '╰', // unicode box corner
-                                0x0b => '╯', // unicode box corner
-                                0x12 => '─', // unicode box horizontal
-                                0x19 => '│', // unicode box vertical
-                                0xa9 => '©', // copyright symbol
-                                _ => '.',
-                            }
-                        } else {
-                            char::from(char_code as u8)
-                        };
-
-                        let mut style = Style::default();
-                        if let Some(cell) = buf.cell_mut((area.left() + col, area.top() + row_idx))
-                        {
-                            if char_code == 0 && attr[i] >> 2 == 0xe {
-                                cell.set_symbol(" ");
-                                cell.set_style(Style::default());
-                                col += 1;
-                                continue;
-                            }
-                            cell.set_symbol(&ch.to_string());
-                            if attr[i] & 1 != 0 {
-                                style = style.underlined();
-                            }
-                            if attr[i] & 2 != 0 {
-                                // selective erase protection mode
-                                style = style.bg(Color::Blue);
-                            }
-                            if attr[i] & 8 != 0 {
-                                style = style.bold();
-                            }
-                            if attr[i] & 16 != 0 {
-                                style = style.reversed();
-                            }
-                            if attr[i] & 32 != 0 {
-                                // This doesn't seem quite right: the status bar shouldn't blink and
-                                // the setup screen's header shouldn't either.
-                                // if !self.mapper.is_blink() {
-                                //     cell.set_symbol(" ");
-                                // }
-                            }
-                            cell.set_style(style);
-                        }
-                        col += 1;
-                        if is_double_width {
-                            if let Some(cell) =
-                                buf.cell_mut((area.left() + col, area.top() + row_idx))
-                            {
-                                cell.set_symbol(" ");
-                                cell.set_style(style);
-                            }
-                            col += 1;
-                        }
-                    }
-                }
+                DisplayMode::Normal => {}
             }
         }
     }

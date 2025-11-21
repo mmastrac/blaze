@@ -278,7 +278,27 @@ pub struct RowFlags {
     pub font: u16,
 }
 
-struct Cell(u8, u8, u8);
+/// Flags for each cell: from the row and both character attribute locations.
+pub struct CellFlags(u8, u8, u8);
+
+impl CellFlags {
+    pub fn is_underline(&self) -> bool {
+        self.1 & 1 != 0
+    }
+
+    pub fn is_bold(&self) -> bool {
+        self.0 & 2 != 0
+    }
+
+    pub fn is_reverse(&self) -> bool {
+        self.0 & 4 != 0
+    }
+
+    /// In the status line, selects a "weird" character. Otherwise, blink?
+    pub fn is_upper_bit(&self) -> bool {
+        self.0 & 8 != 0
+    }
+}
 
 /// Decode the VRAM into a grid of characters and attributes.
 ///
@@ -290,7 +310,7 @@ pub fn decode_vram<T>(
     vram: &[u8],
     mapper: &Mapper,
     mut row_callback: impl FnMut(&mut T, u8, Row, RowFlags),
-    mut column_callback: impl FnMut(&mut T, u8, u8, u16),
+    mut column_callback: impl FnMut(&mut T, u8, u16, CellFlags),
     mut data: T,
 ) -> T {
     let vram_base = 0;
@@ -421,8 +441,6 @@ pub fn decode_vram<T>(
         for i in 1..133 {
             let bit = ((i % 4) * 2) as u8;
             attr[i - 1] = (vram[row_addr + 0xdd + (i / 4)] >> bit) & 0x3;
-            let cell_attr = ((line[i - 1] & 0xf00) >> 8) as u8;
-            attr[i - 1] |= cell_attr << 2;
         }
 
         let max_columns = if row_flags.is_80 { 80 } else { 132 };
@@ -433,17 +451,18 @@ pub fn decode_vram<T>(
 
         for col in 0..decoded_columns {
             let value = line[col];
-            let char_code = (value & 0xff) as u8;
+            let char_code = value & 0x1ff;
 
-            let mut combined_attr = (value & 0xf00) as u16 | attr[col] as u16;
+            let mut row_attr = 0;
             if row_flags.double_width {
-                combined_attr |= 1 << 12;
+                row_attr |= 1 << 0;
             }
             if !row_flags.is_80 {
-                combined_attr |= 1 << 13;
+                row_attr |= 1 << 1;
             }
+            let cell_flags = CellFlags(((value & 0xf00) >> 8) as u8, attr[col], row_attr);
 
-            column_callback(&mut data, col as u8, char_code, combined_attr);
+            column_callback(&mut data, col as u8, char_code, cell_flags);
         }
     }
     data

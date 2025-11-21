@@ -166,7 +166,9 @@ impl CrosstermKeyboard {
                     KeyCode::Esc => {
                         sender.send_escape();
                     }
-
+                    KeyCode::Tab => {
+                        _ = sender.send_special_key(SpecialKey::Tab);
+                    }
                     KeyCode::F(1) => {
                         _ = sender.send_special_key(SpecialKey::F1);
                     }
