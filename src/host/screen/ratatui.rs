@@ -143,11 +143,18 @@ impl<'a> Widget for Screen<'a> {
                                     buf.cell_mut((area.left() + col, area.top() + row_idx))
                                 {
                                     cell.set_symbol(&ch.to_string());
-                                    cell.set_style(if i % 2 == 0 {
+                                    let mut style = if i % 2 == 0 {
                                         Style::default()
                                     } else {
                                         Style::default().bold()
-                                    });
+                                    };
+                                    if i > 107 && i < 128 {
+                                        style = style.fg(Color::Blue);
+                                    }
+                                    if i > 221 {
+                                        style = style.fg(Color::Red);
+                                    }
+                                    cell.set_style(style);
                                 }
                                 col += 1;
                             }

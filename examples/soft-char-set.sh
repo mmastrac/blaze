@@ -1,0 +1,63 @@
+echo "Loading font..."
+# Pfn ; Pcn; Pe; Pcmw; Pss; Pt; Pcmh; Pcss
+printf '\eP1;1;0;10;1;2;16;0{ @'
+printf -- 'FFFFFFFFFF/FFFFFFFFFF/FFFFFFFFFF;'
+printf -- '~~~~~~~~~~/~~~~~~~~~~/~~~~~~~~~~;'
+printf -- '??????????/??????????/??????????;'
+printf -- '~@@@@@@@@~/~????????~/~GGGGGGGG~;'
+printf -- 'TTTTTTTTTT/TTTTTTTTTT/TTTTTTTTTT;'
+printf ';;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;'
+printf '\e\'
+# Pfn ; Pcn; Pe; Pcmw; Pss; Pt; Pcmh; Pcss
+printf '\eP1;1;0;6;2;2;16;0{ @'
+printf -- 'FFFFFF/FFFFFF/FFFFFF;'
+printf -- '~~~~~~/~~~~~~/~~~~~~;'
+printf -- '??????/??????/??????;'
+printf -- '~@@@@~/~????~/~GGGG~;'
+printf -- 'TTTTTT/TTTTTT/TTTTTT;'
+printf ';;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;'
+
+printf '\e\'
+# Pfn ; Pcn; Pe; Pcmw; Pss; Pt; Pcmh; Pcss
+printf '\eP1;1;0;10;11;2;10;0{ @'
+printf -- 'FFFFFFFFFF/FFFFFFFFFF/FFFFFFFFFF;'
+printf -- '~~~~~~~~~~/~~~~~~~~~~/~~~~~~~~~~;'
+printf -- '??????????/??????????/??????????;'
+printf -- '~@@@@@@@@~/~????????~/~GGGGGGGG~;'
+printf -- 'TTTTTTTTTT/TTTTTTTTTT/TTTTTTTTTT;'
+printf ';;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;'
+printf '\e\'
+# Pfn ; Pcn; Pe; Pcmw; Pss; Pt; Pcmh; Pcss
+printf '\eP1;1;0;6;12;2;10;0{ @'
+printf -- 'FFFFFF/FFFFFF/FFFFFF;'
+printf -- '~~~~~~/~~~~~~/~~~~~~;'
+printf -- '??????/??????/??????;'
+printf -- '~@@@@~/~????~/~GGGG~;'
+printf -- 'TTTTTT/TTTTTT/TTTTTT;'
+printf ';;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;'
+printf '\e\'
+# Pfn ; Pcn; Pe; Pcmw; Pss; Pt; Pcmh; Pcss
+printf '\eP1;1;0;10;21;2;8;0{ @'
+printf -- 'FFFFFFFFFF/FFFFFFFFFF/FFFFFFFFFF;'
+printf -- '~~~~~~~~~~/~~~~~~~~~~/~~~~~~~~~~;'
+printf -- '??????????/??????????/??????????;'
+printf -- '~@@@@@@@@~/~????????~/~GGGGGGGG~;'
+printf -- 'TTTTTTTTTT/TTTTTTTTTT/TTTTTTTTTT;'
+printf ';;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;'
+printf '\e\'
+# Pfn ; Pcn; Pe; Pcmw; Pss; Pt; Pcmh; Pcss
+printf '\eP1;1;0;6;22;2;8;0{ @'
+printf -- 'FFFFFF/FFFFFF/FFFFFF;'
+printf -- '~~~~~~/~~~~~~/~~~~~~;'
+printf -- '??????/??????/??????;'
+printf -- '~@@@@~/~????~/~GGGG~;'
+printf -- 'TTTTTT/TTTTTT/TTTTTT;'
+printf ';;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;'
+printf '\e\'
+
+printf '\e) @'
+printf '\x0e'
+
+printf '!!!"""###$$$\n'
+
+printf '\x0f'

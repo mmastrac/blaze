@@ -118,7 +118,7 @@ Output:
  - 0x7ff3:
   - Set to `1010_0000` and then a delay - `1..._....` may be a reset
   - `.x.._....` => blink register? watchdog? Toggles once per second (affects read of 7ff6)
-  - `..x._....` => VRAM page mapped at 0? (only bit set at boot, set while setting fonts)
+  - `..x._....` => Disables the chargen for everything but the status row
   - `...x_....` => x = Swizzles 0x200/0x300 (possibly more addresses). Could be used to quickly swap registers. Used for session flipping.
   - `...._x...` => screen select: 0 = session 1, 1 = session 2
   - `...._.x..` => set if either session 1 or 2 is inverted (maybe screen border)

@@ -53,7 +53,7 @@ impl Mapper {
         if (3..=5).contains(&offset) {
             let changed = self.mapper[offset as usize] ^ value;
             let strange_bits = match offset {
-                3 => 0b1000_0000,
+                3 => 0b1010_0000,
                 4 => 0b1110_1100,
                 5 => 0b1101_1011,
                 _ => 0,
@@ -79,23 +79,27 @@ impl Mapper {
         self.mapper2[offset as usize]
     }
 
-    pub fn vram_offset(&self) -> u32 {
+    pub fn vram_offset_8000(&self) -> u32 {
         0x8000
     }
 
     pub fn vram_offset_0(&self) -> u32 {
+        // if self.vram_8000_bit() == 1 {
         0
+        // } else {
+        //     0x8000
+        // }
     }
 
     pub fn vram_offset_display(&self) -> u32 {
         0
     }
 
-    pub fn vram_8000_bit(&self) -> u32 {
-        self.vram_8000_bit_value(self.mapper[3])
+    pub fn disable_chargen(&self) -> u32 {
+        self.disable_chargen_value(self.mapper[3])
     }
 
-    pub fn vram_8000_bit_value(&self, value: u8) -> u32 {
+    pub fn disable_chargen_value(&self, value: u8) -> u32 {
         (value & 0x20 != 0) as u32
     }
 
@@ -133,6 +137,10 @@ impl Mapper {
 
     pub fn row_height_screen_2(&self) -> u8 {
         ((self.get(6) & 0x0f) + 15) % 16 + 1
+    }
+
+    pub fn is_status_bar_phase(&self) -> bool {
+        self.get(6) & 0xf0 == 0xf0 || self.get2(6) & 0xf0 == 0xf0
     }
 
     pub fn row_count(&self, vram: &[u8]) -> Option<u8> {
@@ -459,7 +467,7 @@ pub fn decode_font(vram: &[u8], address: u32, is_80: bool, char: &mut [u16; 16])
 /// This handles a read of 0x7ff6. We don't know what this register does, but it
 /// appears to return something that is a function of 80/132 column mode,
 /// invert, the "screen selection toggle" row attribute (along with double-width
-/// char flag),and some other unknown bits.
+/// char flag), and some other unknown bits.
 ///
 /// Since 0x7ff6 is used for row height writes, it is reasonable to assume this
 /// is something to do with the chargen. The char width and invert bits are

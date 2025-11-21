@@ -1,12 +1,14 @@
-use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
+use std::{cell::RefCell, io::Write};
 
 use i8051::Cpu;
 #[cfg(feature = "tui")]
 use i8051_debug_tui::{Debugger, DebuggerState};
 #[cfg(feature = "tui")]
 use ratatui::crossterm;
+use ratatui::crossterm::event::KeyModifiers;
+use tracing::info;
 
 use crate::{
     System,
@@ -18,8 +20,8 @@ pub struct WgpuRender {}
 
 impl WgpuRender {
     pub fn render(&self, system: &System, frame: &mut [u8]) {
-        // Don't render during vsync
-        if system.memory.mapper.get(6) & 0xf0 == 0xf0 {
+        // Don't update during the status row phase (we shouldn't get here)
+        if system.memory.mapper.is_status_bar_phase() {
             return;
         }
 
@@ -30,6 +32,7 @@ impl WgpuRender {
             row_flags: RowFlags,
             start_row: usize,
             frame: &'a mut [u8],
+            chargen_disabled: bool,
             smooth: (u8, u8, u8),
         }
         let render = Render {
@@ -39,6 +42,7 @@ impl WgpuRender {
                 system.memory.mapper.get(2),
             ),
             frame,
+            chargen_disabled: system.memory.mapper.disable_chargen() == 1,
             ..Default::default()
         };
         let mut font = [0_u16; 16];
@@ -72,12 +76,19 @@ impl WgpuRender {
             |render, column, c, attr| {
                 let c = c as usize | ((((attr >> 2) & 0x01) as usize) << 8);
                 let mut c = c * 2;
+                // The status bar rendering rules are strange...  if bit 0x8 in the main attribute
+                // nibble is not set, we use the normal 132-column font, otherwise we use this as
+                // "direct pointer" to an extended char.
                 if render.row_flags.status_row && attr >> 2 & 0x8 == 0 {
                     c = c.saturating_add(1);
                 }
                 let bold = attr & 0x08 != 0;
                 let underline = attr & 1 != 0;
-                let color = if bold { 0xff } else { 0x80 };
+                let color = if render.chargen_disabled && !render.row_flags.status_row {
+                    0x00
+                } else {
+                    if bold { 0xff } else { 0x80 }
+                };
                 let font_address_base = c * 16 + 0x8000 + render.row_flags.font as usize;
                 decode_font(
                     system.memory.vram.as_ref(),
@@ -181,6 +192,49 @@ pub fn run(
         let mut system = system_clone.borrow_mut();
         for _ in 0..20000 {
             system.step(&mut cpu);
+        }
+        while system.memory.mapper.is_status_bar_phase() {
+            system.step(&mut cpu);
+        }
+        #[cfg(feature = "vram-dump")]
+        {
+            if crossterm::event::poll(Duration::from_millis(0)).unwrap() {
+                let Ok(event) = crossterm::event::read() else {
+                    return;
+                };
+                if matches!(
+                    event,
+                    crossterm::event::Event::Key(crossterm::event::KeyEvent {
+                        code: crossterm::event::KeyCode::Char('d'),
+                        modifiers: KeyModifiers::NONE,
+                        ..
+                    })
+                ) {
+                    let mut file = std::fs::File::create("/tmp/vram.bin").unwrap();
+                    file.write_all(&system.memory.vram[..]).unwrap();
+                    let mut file = std::fs::File::create("/tmp/vram.png").unwrap();
+                    let w = system.memory.vram.len() as u32 / 256 * 8;
+                    info!("Logging VRAM as {w}x256 to /tmp/vram.png");
+                    let mut encoder = png::Encoder::new(&mut file, w, 256);
+                    encoder.set_color(png::ColorType::Grayscale);
+                    encoder.set_depth(png::BitDepth::Eight);
+                    let mut writer = encoder.write_header().unwrap();
+                    let mut row_data = Vec::with_capacity(w as usize * 256);
+                    for row in 0..256 {
+                        for col in 0..w {
+                            let index = row + col / 8 * 256;
+                            let pixel = system.memory.vram[index as usize];
+                            row_data.push(if pixel & (1 << (col % 8)) != 0 {
+                                255
+                            } else {
+                                0
+                            });
+                        }
+                    }
+                    writer.write_image_data(&row_data).unwrap();
+                    info!("VRAM logged to /tmp/vram.png");
+                }
+            }
         }
     };
 

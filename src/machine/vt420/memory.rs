@@ -190,7 +190,6 @@ pub struct RAM {
     pub mapper: Mapper,
     pub peripheral: [u8; 0x100],
     pub rom_bank: Rc<Cell<bool>>,
-    pub input_queue: RefCell<Vec<u8>>,
     pub sync: SyncHolder,
     pub nvr: Nvr,
     pub duart: DUART,
@@ -208,7 +207,6 @@ impl RAM {
             mapper,
             peripheral,
             rom_bank,
-            input_queue: RefCell::new("x".to_string().into_bytes()),
             sync,
             nvr: Nvr::new(),
             duart,
@@ -257,7 +255,7 @@ impl RAM {
         } else {
             let addr = (addr & 0x7fff) as u32;
             if self.mapper.map_vram_at_8000() == 1 {
-                let vram_offset = self.mapper.vram_offset();
+                let vram_offset = self.mapper.vram_offset_8000();
                 (MemoryTarget::VRAM, addr + vram_offset)
             } else {
                 (MemoryTarget::SRAM, addr)
@@ -352,10 +350,10 @@ impl MemoryMapper for RAM {
                     value
                 );
                 if offset == 0x3
-                    && self.mapper.vram_8000_bit() ^ self.mapper.vram_8000_bit_value(value) != 0
+                    && self.mapper.disable_chargen() ^ self.mapper.disable_chargen_value(value) != 0
                 {
-                    let old = self.mapper.vram_8000_bit();
-                    let new = self.mapper.vram_8000_bit_value(value);
+                    let old = self.mapper.disable_chargen();
+                    let new = self.mapper.disable_chargen_value(value);
                     debug!("VIDEO: VRAM page changed: {} -> {}", old, new);
                     // if old == 1 && new == 0 {
                     //     let font = &self.vram[0..];
