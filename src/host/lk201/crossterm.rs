@@ -1,6 +1,6 @@
 use ratatui::crossterm::event::{Event, KeyCode, KeyModifiers};
 
-use crate::machine::generic::lk201::{LK201Sender, SpecialKey};
+use lk201::{LK201Sender, SpecialKey};
 
 #[derive(Default)]
 pub struct CrosstermKeyboard {

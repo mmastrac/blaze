@@ -16,7 +16,7 @@ use winit::{dpi::LogicalSize, event_loop::EventLoop, window::WindowBuilder};
 use winit_input_helper::WinitInputHelper;
 
 use crate::host::lk201::winit::update_keyboard;
-use crate::machine::generic::lk201::LK201Sender;
+use lk201::LK201Sender;
 
 use tracing::{error, info};
 

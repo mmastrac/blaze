@@ -1,7 +1,7 @@
 use game_loop::winit::keyboard::{Key, KeyCode};
 use winit_input_helper::WinitInputHelper;
 
-use crate::machine::generic::lk201::{LK201Sender, SpecialKey};
+use lk201::{LK201Sender, SpecialKey};
 
 pub fn update_keyboard(input: &WinitInputHelper, sender: &LK201Sender) {
     for (key, mapping) in [

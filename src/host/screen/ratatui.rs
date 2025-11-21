@@ -9,7 +9,7 @@ use ratatui::crossterm;
 use ratatui::layout::Offset;
 use ratatui::layout::Rect;
 use ratatui::prelude::CrosstermBackend;
-use ratatui::style::{Color, Style, Stylize};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 

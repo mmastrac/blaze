@@ -19,7 +19,7 @@ use tracing::{info, trace, warn};
 
 use crate::host::comm::{self, CommConfig};
 use crate::machine::generic::duart::DUART;
-use crate::machine::generic::lk201::LK201;
+use lk201::LK201;
 
 use self::memory::{Bank, DiagnosticMonitor, RAM, ROM, VideoProcessor};
 
@@ -354,7 +354,7 @@ impl CpuContext for System {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::machine::generic::lk201::SpecialKey;
+    use lk201::SpecialKey;
 
     /// Run the ROM and simulation and ensure that we boot to the passed-test screen
     /// and setup comes up.
