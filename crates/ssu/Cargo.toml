@@ -1,0 +1,11 @@
+[package]
+name = "ssu"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0"
+description = "SSU protocol implementation"
+authors = ["Matt Mastracci <matthew@mastracci.com>"]
+repository = "https://github.com/mmastrac/blaze-vt"
+
+[dependencies]
+

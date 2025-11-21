@@ -9,6 +9,7 @@ const TIME_STEP: Duration = Duration::from_micros(1_000_000 / FPS as u64);
 use game_loop::winit;
 
 use game_loop::{Time, TimeTrait as _, game_loop};
+use pixels::wgpu::Backends;
 use pixels::{Error, Pixels, PixelsBuilder, SurfaceTexture};
 use std::sync::Arc;
 use std::time::Duration;
@@ -66,11 +67,35 @@ pub fn main(
     step: impl FnMut() + 'static,
 ) -> Result<(), Error> {
     let future = main_async(sender, render, step);
+
     #[cfg(target_arch = "wasm32")]
     {
         wasm_bindgen_futures::spawn_local(async {
-            if let Err(e) = future.await {
-                error!("Graphics error: {}", e);
+            let res = future.await;
+            if let Err(e) = res {
+                match e {
+                    Error::AdapterNotFound => {
+                        error!("Graphics error: Adapter not found");
+                    }
+                    Error::CreateSurface(e) => {
+                        error!("Graphics error: Create surface: {}", e);
+                    }
+                    Error::DeviceNotFound(e) => {
+                        error!("Graphics error: Device not found: {}", e);
+                    }
+                    Error::InvalidTexture(e) => {
+                        error!("Graphics error: Invalid texture: {}", e);
+                    }
+                    Error::UserDefined(e) => {
+                        error!("Graphics error: {}", e);
+                    }
+                    Error::Surface(e) => {
+                        error!("Graphics error: Surface: {}", e);
+                    }
+                    _ => {
+                        error!("Graphics error: Unexpected error: {}", e);
+                    }
+                }
             }
         });
         Ok(())
@@ -195,7 +220,8 @@ pub async fn main_async(
 
         let surface_texture = SurfaceTexture::new(WIDTH, HEIGHT, Arc::clone(&window));
 
-        let pixel_builder = PixelsBuilder::new(WIDTH as u32, HEIGHT as u32, surface_texture);
+        let pixel_builder = PixelsBuilder::new(WIDTH as u32, HEIGHT as u32, surface_texture)
+            .wgpu_backend(Backends::GL);
 
         #[cfg(target_arch = "wasm32")]
         let pixel_builder = {
@@ -260,8 +286,8 @@ pub async fn main_async(
                 // Resize the window
                 if let Some(size) = g.game.input.window_resized() {
                     // window_resized() returns physical size, but clamp to reasonable maximum
-                    // texture size (most GPUs support up to 16384, but we'll use 8192 to be safe)
-                    const MAX_TEXTURE_SIZE: u32 = 8192;
+                    // texture size (most GPUs support up to 16384, but we'll use 4096 to be safe)
+                    const MAX_TEXTURE_SIZE: u32 = 4096;
                     let width = size.width.min(MAX_TEXTURE_SIZE);
                     let height = size.height.min(MAX_TEXTURE_SIZE);
                     if let Err(err) = g.game.pixels.resize_surface(width, height) {
