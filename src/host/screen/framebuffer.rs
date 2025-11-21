@@ -17,10 +17,11 @@ use crate::{
     machine::vt420::video::{RowFlags, decode_font, decode_vram},
 };
 
+/// Renderer for RGBA framebuffers.
 #[derive(Default)]
-pub struct WgpuRender {}
+pub struct FramebufferRender {}
 
-impl WgpuRender {
+impl FramebufferRender {
     pub fn render(&self, system: &System, frame: &mut [u8]) {
         // Don't update during the status row phase (we shouldn't get here)
         if system.memory.mapper.is_status_bar_phase() {
@@ -190,7 +191,7 @@ pub fn run(
 
     let sender = system.keyboard.sender();
     let system = Rc::new(RefCell::new(system));
-    let render = crate::host::screen::wgpu::WgpuRender::default();
+    let render = crate::host::screen::framebuffer::FramebufferRender::default();
 
     let system_clone = system.clone();
     let stepper = move || {
@@ -271,7 +272,7 @@ fn run_debugger(
 
     let sender = system.keyboard.sender();
     let system = Rc::new(RefCell::new(system));
-    let render = crate::host::screen::wgpu::WgpuRender::default();
+    let render = crate::host::screen::framebuffer::FramebufferRender::default();
 
     let system_clone = system.clone();
     let stepper = move || {

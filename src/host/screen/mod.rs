@@ -4,6 +4,6 @@ pub mod headless;
 pub mod ratatui;
 
 #[cfg(feature = "graphics")]
-pub mod wgpu;
+pub mod framebuffer;
 
 pub mod unicode;

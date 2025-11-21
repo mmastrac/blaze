@@ -9,7 +9,7 @@ const TIME_STEP: Duration = Duration::from_micros(1_000_000 / FPS as u64);
 use game_loop::winit;
 
 use game_loop::{Time, TimeTrait as _, game_loop};
-use pixels::wgpu::Backends;
+use pixels::wgpu::{self, Backends};
 use pixels::{Error, Pixels, PixelsBuilder, SurfaceTexture};
 use std::sync::Arc;
 use std::time::Duration;
