@@ -14,10 +14,12 @@ use hex_literal::hex;
 use i8051::breakpoint::Breakpoints;
 use i8051::peripheral::{P3_INT1, Serial, Timer};
 use i8051::{Cpu, CpuContext, CpuView, DefaultPortMapper, PortMapper};
+use ssu::session::SessionConfig;
 use tracing::debug;
 use tracing::{info, trace, warn};
 
-use crate::host::comm::{self, CommConfig};
+use crate::host::comm::CommSession;
+use crate::host::comm::connect_duart;
 use crate::machine::generic::duart::DUART;
 use lk201::LK201;
 
@@ -39,11 +41,10 @@ pub(crate) struct System {
     diagnostic_monitor: DiagnosticMonitor,
     timer: Timer,
     default: DefaultPortMapper,
+    comm_a: CommSession,
     dtr_a: Rc<Cell<bool>>,
+    comm_b: CommSession,
     dtr_b: Rc<Cell<bool>>,
-
-    #[cfg(feature = "demo")]
-    pub(crate) demo_comm: Option<crate::host::demo_comm::DemoComm>,
 
     pub(crate) keyboard: LK201,
     pub(crate) breakpoints: Breakpoints,
@@ -58,8 +59,8 @@ impl System {
     pub(crate) fn new(
         rom: Vec<u8>,
         nvr: Option<&Path>,
-        comm1: CommConfig,
-        comm2: CommConfig,
+        comm1: Option<SessionConfig>,
+        comm2: Option<SessionConfig>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let bank = Bank::default();
         info!("Loading ROM into memory...");
@@ -73,23 +74,20 @@ impl System {
         info!("Configuring UARTs...");
         let (duart, channel_a, channel_b) = DUART::new();
 
+        let dtr_a = channel_a.dtr.clone();
+        let dtr_b = channel_b.dtr.clone();
+
         #[cfg(feature = "demo")]
-        let (demo_comm, dtr_a) = if comm1 == CommConfig::Demo {
-            (
-                Some(crate::host::demo_comm::DemoComm::new(
-                    channel_a.tx,
-                    channel_a.rx,
-                )),
-                Rc::new(Cell::new(true)),
-            )
+        let comm_a = if let Some(config) = comm1 {
+            connect_duart(channel_a, config)?
         } else {
-            (None, comm::connect_duart(channel_a, comm1)?)
+            crate::host::demo_comm::DemoComm::new(channel_a)
         };
 
         #[cfg(not(feature = "demo"))]
-        let dtr_a = comm::connect_duart(channel_a, comm1)?;
+        let comm_a = connect_duart(channel_a, comm1.unwrap_or_default())?;
 
-        let dtr_b = comm::connect_duart(channel_b, comm2)?;
+        let comm_b = connect_duart(channel_b, comm2.unwrap_or_default())?;
 
         let mut memory = RAM::new(bank.bank.clone(), video_row.sync.clone(), duart);
         let mut nvr_file = None;
@@ -137,10 +135,10 @@ impl System {
             nvr_write: 0,
             video_row,
             serial,
+            comm_a,
             dtr_a,
+            comm_b,
             dtr_b,
-            #[cfg(feature = "demo")]
-            demo_comm,
             diagnostic_monitor: DiagnosticMonitor::default(),
             timer: Timer::default(),
             default: DefaultPortMapper::default(),
@@ -197,10 +195,9 @@ impl System {
         } else if prev_p3 & P3_INT1 != 0 {
             trace!("DUART interrupt");
         }
-        #[cfg(feature = "demo")]
-        if let Some(demo_comm) = &mut self.demo_comm {
-            demo_comm.tick();
-        }
+        self.comm_a.tick();
+        self.comm_b.tick();
+
         // Set DTR if either DTR1 or DTR2 is set (ideally this should gate on the 232/423 select pin)
         let dtr_a = !self.memory.duart.output_bits_inv & 0b1010 != 0b1010;
         let dtr_b = !self.memory.duart.output_bits_inv & (1 << 7) == 0;
@@ -364,8 +361,13 @@ mod tests {
     fn test_boots() {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
         let rom = fs::read(&format!("{}/roms/vt420/23-068E9-00.bin", manifest_dir)).unwrap();
-        let mut system =
-            System::new(rom, None, CommConfig::default(), CommConfig::default()).unwrap();
+        let mut system = System::new(
+            rom,
+            None,
+            Some(SessionConfig::default()),
+            Some(SessionConfig::default()),
+        )
+        .unwrap();
 
         system.keyboard.start_collecting_commands();
 

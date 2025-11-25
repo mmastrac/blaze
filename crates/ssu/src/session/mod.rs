@@ -1,0 +1,155 @@
+use std::{borrow::Cow, num::NonZeroU16, path::PathBuf, str::FromStr, sync::mpsc};
+
+use clap::Parser;
+
+use crate::session::io::IoSession;
+
+pub mod exec;
+pub mod io;
+pub mod loopback;
+pub mod pipe;
+#[cfg(feature = "pty")]
+pub mod pty;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionConfig {
+    /// Loopback mode (no external connection)
+    Loopback(String),
+    /// Single bidirectional pipe
+    Pipe(PathBuf),
+    /// Separate read and write pipes
+    Pipes { rx: PathBuf, tx: PathBuf },
+    /// Execute a command and connect to its pty
+    Exec(String),
+    /// Execute a command and connect to its pty
+    #[cfg(feature = "pty")]
+    ExecPty {
+        cmd: String,
+        rows: NonZeroU16,
+        cols: NonZeroU16,
+    },
+}
+
+impl Default for SessionConfig {
+    fn default() -> Self {
+        Self::Loopback(String::new())
+    }
+}
+
+/// A sub-parser for the session arguments
+#[derive(clap::Parser, Debug)]
+#[command(disable_help_flag = true, disable_version_flag = true)]
+enum SessionSubcommand {
+    Loopback {
+        /// Provide initial text inserted into the loopback connection
+        initial: Option<String>,
+    },
+    Pipe {
+        /// Provide a single pipe for both read and write.
+        read_write: Option<PathBuf>,
+        /// Provide a separate read pipe from the write pipe.
+        read: Option<PathBuf>,
+        /// Provide a separate write pipe from the read pipe.
+        write: Option<PathBuf>,
+    },
+    Exec {
+        /// The command to execute.
+        command: PathBuf,
+        /// Allocate a PTY for the process.
+        #[arg(long, default_value_t = false)]
+        no_pty: bool,
+        #[arg(long, default_value_t = NonZeroU16::new(25).unwrap(), conflicts_with = "no_pty")]
+        rows: NonZeroU16,
+        #[arg(long, default_value_t = NonZeroU16::new(80).unwrap(), conflicts_with = "no_pty")]
+        cols: NonZeroU16,
+    },
+}
+
+impl FromStr for SessionConfig {
+    type Err = Cow<'static, str>;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = s.trim();
+
+        let mut args = shellish_parse::parse(s, shellish_parse::ParseOptions::new())
+            .map_err(|_| "Invalid argument")?;
+        // Prepend a dummy program name - clap expects the first argument to be the program name
+        args.insert(0, "session".to_string());
+        let subcommand = SessionSubcommand::try_parse_from(args)
+            .map_err(|s| format!("Invalid session configuration: {s:?}"))?;
+        Ok(match subcommand {
+            SessionSubcommand::Loopback { initial } => {
+                SessionConfig::Loopback(initial.unwrap_or_default())
+            }
+            SessionSubcommand::Exec {
+                command,
+                no_pty,
+                rows,
+                cols,
+            } => {
+                if !no_pty {
+                    #[cfg(feature = "pty")]
+                    {
+                        return Ok(SessionConfig::ExecPty {
+                            cmd: command.to_string_lossy().to_string(),
+                            rows,
+                            cols,
+                        });
+                    }
+                    #[cfg(not(feature = "pty"))]
+                    {
+                        return Err(Cow::Borrowed(
+                            "PTY mode not available (pty feature not enabled)",
+                        ));
+                    }
+                } else {
+                    SessionConfig::Exec(command.to_string_lossy().to_string())
+                }
+            }
+            SessionSubcommand::Pipe {
+                read_write,
+                read,
+                write,
+            } => {
+                if let Some(read_write) = read_write {
+                    SessionConfig::Pipe(read_write)
+                } else if let Some(read) = read {
+                    SessionConfig::Pipes {
+                        rx: read,
+                        tx: write.unwrap(),
+                    }
+                } else {
+                    unreachable!()
+                }
+            }
+        })
+    }
+}
+
+pub enum Ticked {
+    /// Byte available.
+    Byte(u8),
+    /// Idle until the next `send` call.
+    IdleInput,
+    /// Idle right now, try again later.
+    Idle,
+}
+
+/// A session endpoint that can be ticked. Backpressure is applied by the
+/// caller.
+pub trait SessionEndpoint {
+    fn recv(&mut self) -> Ticked;
+    fn send(&mut self, b: u8);
+}
+
+/// A I/O-based session endpoint that is started in a separate thread.
+/// Backpressure is applied by SyncSender filling up at which point the endpoint
+/// should apply hardware flow control signals if available.
+pub trait IoSessionEndpoint {
+    /// Start the session endpoint in a separate thread.
+    fn start(
+        self,
+        rx: mpsc::SyncSender<u8>,
+        tx: mpsc::Receiver<u8>,
+        ready: impl FnOnce(std::io::Result<IoSession>) + Send + 'static,
+    );
+}

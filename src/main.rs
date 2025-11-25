@@ -1,6 +1,7 @@
 use clap::Parser;
 #[cfg(feature = "tui")]
 use i8051_debug_tui::{Debugger, TracingCollector};
+use ssu::session::SessionConfig;
 use std::path::PathBuf;
 use tracing::{Level, info};
 
@@ -14,8 +15,6 @@ use machine::vt420::System;
 use machine::vt420::breakpoints::create_breakpoints;
 
 use i8051::Cpu;
-
-use crate::host::comm::CommConfig;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 enum Display {
@@ -54,45 +53,13 @@ struct Args {
     #[arg(long, conflicts_with = "benchmark")]
     display: Option<Display>,
 
-    /// Comm1: Single bidirectional pipe
-    #[arg(long = "comm1-pipe", value_name = "PIPE", group = "comm1")]
-    comm1_pipe: Option<PathBuf>,
+    /// Comm1 session configuration
+    #[arg(long = "comm1", value_name = "SESSION")]
+    comm1: Option<SessionConfig>,
 
-    /// Comm1: Separate read and write pipes
-    #[arg(long = "comm1-pipes", num_args = 2, value_names = ["RX", "TX"], group = "comm1")]
-    comm1_pipes: Vec<PathBuf>,
-
-    /// Comm1: Execute a command and connect to its stdin/stdout
-    #[arg(long = "comm1-exec-raw", value_name = "COMMAND", group = "comm1")]
-    comm1_exec_raw: Option<String>,
-
-    /// Comm1: Execute a command and connect to its pty
-    #[arg(long = "comm1-exec", value_name = "COMMAND", group = "comm1")]
-    comm1_exec: Option<String>,
-
-    /// Comm1: Use loopback mode
-    #[arg(long = "comm1-loopback", group = "comm1")]
-    comm1_loopback: bool,
-
-    /// Comm2: Single bidirectional pipe
-    #[arg(long = "comm2-pipe", value_name = "PIPE", group = "comm2")]
-    comm2_pipe: Option<PathBuf>,
-
-    /// Comm2: Separate read and write pipes
-    #[arg(long = "comm2-pipes", num_args = 2, value_names = ["RX", "TX"], group = "comm2")]
-    comm2_pipes: Vec<PathBuf>,
-
-    /// Comm2: Execute a command and connect to its stdin/stdout
-    #[arg(long = "comm2-exec-raw", value_name = "COMMAND", group = "comm2")]
-    comm2_exec_raw: Option<String>,
-
-    /// Comm2: Execute a command and connect to its pty
-    #[arg(long = "comm2-exec", value_name = "COMMAND", group = "comm2")]
-    comm2_exec: Option<String>,
-
-    /// Comm2: Use loopback mode
-    #[arg(long = "comm2-loopback", group = "comm2")]
-    comm2_loopback: bool,
+    /// Comm2 session configuration
+    #[arg(long = "comm2", value_name = "SESSION")]
+    comm2: Option<SessionConfig>,
 
     /// Display the video RAM
     #[arg(long, requires = "display")]
@@ -240,35 +207,7 @@ fn run(
 
     info!("Configuring system...");
 
-    // Parse comm1 configuration
-    let comm1_pipes = if args.comm1_pipes.len() == 2 {
-        Some((args.comm1_pipes[0].clone(), args.comm1_pipes[1].clone()))
-    } else {
-        None
-    };
-    let comm1_config = CommConfig::from_args(
-        args.comm1_pipe,
-        comm1_pipes,
-        args.comm1_exec_raw,
-        args.comm1_exec,
-        args.comm1_loopback,
-    );
-
-    // Parse comm2 configuration
-    let comm2_pipes = if args.comm2_pipes.len() == 2 {
-        Some((args.comm2_pipes[0].clone(), args.comm2_pipes[1].clone()))
-    } else {
-        None
-    };
-    let comm2_config = CommConfig::from_args(
-        args.comm2_pipe,
-        comm2_pipes,
-        args.comm2_exec_raw,
-        args.comm2_exec,
-        args.comm2_loopback,
-    );
-
-    let mut system = System::new(rom, args.nvr.as_deref(), comm1_config, comm2_config)?;
+    let mut system = System::new(rom, args.nvr.as_deref(), args.comm1, args.comm2)?;
 
     let breakpoints = &mut system.breakpoints;
     if args.log {
@@ -310,7 +249,7 @@ fn run(
                 host::screen::ratatui::run(system, cpu, debugger, args.show_mapper, args.show_vram)?
             }
             #[cfg(feature = "graphics")]
-            Display::Graphics => host::screen::wgpu::run(
+            Display::Graphics => host::screen::framebuffer::run(
                 system,
                 cpu,
                 #[cfg(feature = "tui")]
