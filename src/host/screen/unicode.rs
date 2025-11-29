@@ -40,6 +40,8 @@ pub fn map_char(ch: u16) -> Option<char> {
         0x10d => Some('F'),
         0x939 => Some('å'),
         0x139 => Some('é'),
+        0x93b => Some('c'),
+        0x13c => Some('a'),
         0x952 => Some('d'),
         0x954 => Some('g'),
         0x154 => Some('e'),
