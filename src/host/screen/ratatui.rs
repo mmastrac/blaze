@@ -82,10 +82,24 @@ impl<'a> Widget for Screen<'a> {
                     render.row_flags = row_flags;
 
                     if row >= render.smooth_row {
-                        render.row_idx -= 1;
+                        render.row_idx = render.row_idx.saturating_sub(1);
                     }
                 },
                 |render, mut column, mut c, attr| {
+                    if column == 0 && render.row_flags.is_80 {
+                        let y = area.top() + render.row_idx as u16;
+                        for x in 80..132 {
+                            if let Some(cell) = buf.cell_mut((x, y)) {
+                                cell.set_char(' ');
+                                cell.set_style(if render.row_flags.invert {
+                                    Style::default().reversed()
+                                } else {
+                                    Style::default()
+                                });
+                            }
+                        }
+                    }
+
                     let mut style = Style::default();
                     if attr.is_underline() {
                         style = style.underlined();
@@ -93,7 +107,7 @@ impl<'a> Widget for Screen<'a> {
                     if attr.is_bold() {
                         style = style.bold();
                     }
-                    if attr.is_reverse() {
+                    if attr.is_reverse() ^ render.row_flags.invert {
                         style = style.reversed();
                     }
 

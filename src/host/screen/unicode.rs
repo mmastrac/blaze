@@ -20,6 +20,7 @@ pub fn map_char(ch: u16) -> Option<char> {
         0x13 => Some('⎽'),
         0x19 => Some('│'),
         0x20..0x7e => Some(ch as u8 as char),
+        0x198 => Some('█'),
         0xa9 => Some('©'),
         0xd7 => Some('×'), // middle x
         0x120 => Some('1'),
