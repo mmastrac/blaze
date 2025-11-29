@@ -117,19 +117,19 @@ Output:
 
  - 0x7ff3:
   - Set to `1010_0000` and then a delay - `1..._....` may be a reset
-  - `.x.._....` => blink register? watchdog? Toggles once per second (affects read of 7ff6)
+  - `.x.._....` => Blink register (toggled once per second by the CPU). Bold pixels -> normal, normal pixels -> black.
   - `..x._....` => Disables the chargen for everything but the status row
   - `...x_....` => x = Swizzles 0x200/0x300 (possibly more addresses). Could be used to quickly swap registers. Used for session flipping.
   - `...._x...` => screen select: 0 = session 1, 1 = session 2
-  - `...._.x..` => set if either session 1 or 2 is inverted (maybe screen border)
+  - `...._.x..` => briefly toggled while entering setup/switching sessions IF either session is inverted (disable overscan?)
   - `...._..x.` => session 1: invert
   - `...._...x` => session 1: 1 = 132 columns, 0 = 80 columns
   
  - 0x7ff4:
   - `.x.._....` => 0 = normal VRAM layout? 1 = alternate VRAM layout? (memory existance is tested in bootstrap, 1 is set if not there)
   - `...x_....` => 1 = 70Hz (70Hz ~14.29ms/frame, 536 lines), 0 = 60Hz (60Hz ~16.67ms/frame, 625 lines) (CONFIRMED via ROM disassembly)
-  - `...._x...` => possibly page flip control? (affects read of 7ff6)
-  - `...._.x..` => ???
+  - `...._x...` => unknown, affects read of 7ff6, no apparent visual impact but used during font loading
+  - `...._.x..` => unknown, unused in ROM
   - `...._..x.` => session 2: invert
   - `...._...x` => session 2: 1 = 132 columns, 0 = 80 columns
 

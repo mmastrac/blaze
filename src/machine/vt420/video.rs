@@ -53,7 +53,7 @@ impl Mapper {
         if (3..=5).contains(&offset) {
             let changed = self.mapper[offset as usize] ^ value;
             let strange_bits = match offset {
-                3 => 0b1000_0000,
+                3 => 0b1010_0000,
                 4 => 0b1110_1100,
                 5 => 0b1101_1011,
                 _ => 0,
@@ -61,8 +61,9 @@ impl Mapper {
             if changed & strange_bits != 0 {
                 let changed = changed & strange_bits;
                 info!(
-                    "VIDEO: Strange bits {changed:08b} in 7ff{offset} changed: {:02X} -> {:02X}",
-                    self.mapper[offset as usize], value
+                    "VIDEO: Strange bits {changed:08b} in 7ff{offset} changed: {:08b} -> {:08b}",
+                    self.mapper[offset as usize] & strange_bits,
+                    value & strange_bits
                 );
             }
         }
@@ -159,6 +160,10 @@ impl Mapper {
             self.get(4),
             &vram[self.vram_offset_display() as usize..],
         )
+    }
+
+    pub fn is_blink(&self) -> bool {
+        self.get(3) & 0x40 != 0
     }
 }
 
@@ -507,8 +512,9 @@ fn calculate_7ff6_read(a: u8, b: u8, vram: &[u8]) -> u8 {
     let c4 = (a & 0b0000_1000) != 0; // screen select
     let x = if c4 { b } else { a };
 
+    // This _appears_ to have no visual impact on the screen
     let c0 = (b & 0b0000_1000) != 0; // ?
-    let c1 = (a & 0b0100_0000) != 0; // chargen disable
+    let c1 = (a & 0b0100_0000) != 0; // blink bit
     let c2 = (x & 0b0000_0010) != 0; // invert
     let c3 = (x & 0b0000_0001) != 0; // 80/132
 

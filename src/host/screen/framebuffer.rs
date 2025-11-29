@@ -89,21 +89,35 @@ impl FramebufferRender {
                 let color = if render.chargen_disabled && !render.row_flags.status_row {
                     [DEFAULT_COLOR.background, DEFAULT_COLOR.background]
                 } else {
-                    match (render.row_flags.invert, attr.is_bold(), attr.is_reverse()) {
-                        (false, false, false) => {
-                            [DEFAULT_COLOR.background, DEFAULT_COLOR.foreground]
+                    let mut pos = if attr.is_bold() {
+                        DEFAULT_COLOR.bold
+                    } else {
+                        DEFAULT_COLOR.foreground
+                    };
+                    let neg = DEFAULT_COLOR.background;
+
+                    if !render.row_flags.status_row {
+                        if attr.is_upper_bit() {
+                            pos = if system.memory.mapper.is_blink() {
+                                if attr.is_bold() {
+                                    DEFAULT_COLOR.foreground
+                                } else {
+                                    DEFAULT_COLOR.background
+                                }
+                            } else {
+                                if attr.is_bold() {
+                                    DEFAULT_COLOR.bold
+                                } else {
+                                    DEFAULT_COLOR.foreground
+                                }
+                            }
                         }
-                        (false, false, true) => {
-                            [DEFAULT_COLOR.foreground, DEFAULT_COLOR.background]
-                        }
-                        (false, true, false) => [DEFAULT_COLOR.background, DEFAULT_COLOR.bold],
-                        (false, true, true) => [DEFAULT_COLOR.bold, DEFAULT_COLOR.foreground],
-                        (true, false, false) => {
-                            [DEFAULT_COLOR.foreground, DEFAULT_COLOR.background]
-                        }
-                        (true, false, true) => [DEFAULT_COLOR.background, DEFAULT_COLOR.foreground],
-                        (true, true, false) => [DEFAULT_COLOR.bold, DEFAULT_COLOR.foreground],
-                        (true, true, true) => [DEFAULT_COLOR.background, DEFAULT_COLOR.bold],
+                    };
+
+                    if render.row_flags.invert ^ attr.is_reverse() {
+                        [pos, neg]
+                    } else {
+                        [neg, pos]
                     }
                 };
 
