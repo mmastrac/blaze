@@ -1,11 +1,11 @@
 use std::num::NonZeroU16;
 use std::thread;
-use std::{fs::File, io, os::fd::OwnedFd, sync::mpsc};
+use std::{fs::File, io, os::fd::OwnedFd};
 
 use pty_process::blocking::Command;
 
 use crate::session::IoSessionEndpoint;
-use crate::session::io::IoSession;
+use crate::session::io::{IoSession, IoSessionReadWrite};
 
 pub struct PtySession {
     command: String,
@@ -22,7 +22,7 @@ impl PtySession {
         }
     }
 
-    fn start(self, rx: mpsc::SyncSender<u8>, tx: mpsc::Receiver<u8>) -> io::Result<IoSession> {
+    fn start(self) -> io::Result<IoSessionReadWrite> {
         let (pty, pts) = pty_process::blocking::open()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         pty.resize(pty_process::Size::new(self.rows.into(), self.cols.into()))
@@ -38,19 +38,14 @@ impl PtySession {
         let pty = File::from(OwnedFd::from(pty));
         let pty_read: File = pty.try_clone()?;
 
-        Ok(IoSession::new(pty_read, pty, rx, tx))
+        Ok(IoSessionReadWrite::new(pty_read, pty))
     }
 }
 
 impl IoSessionEndpoint for PtySession {
-    fn start(
-        self,
-        rx: mpsc::SyncSender<u8>,
-        tx: mpsc::Receiver<u8>,
-        ready: impl FnOnce(std::io::Result<IoSession>) + Send + 'static,
-    ) {
+    fn start(self, ready: impl FnOnce(std::io::Result<IoSessionReadWrite>) + Send + 'static) {
         thread::spawn(move || {
-            let result = self.start(rx, tx);
+            let result = self.start();
             ready(result);
         });
     }

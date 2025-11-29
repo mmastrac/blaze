@@ -1,8 +1,8 @@
 use std::process::Stdio;
-use std::sync::mpsc;
 use std::{io, thread};
 
-use crate::session::{IoSessionEndpoint, io::IoSession};
+use crate::session::IoSessionEndpoint;
+use crate::session::io::IoSessionReadWrite;
 
 pub struct ExecSession {
     command: String,
@@ -13,7 +13,7 @@ impl ExecSession {
         ExecSession { command }
     }
 
-    pub fn start(self, rx: mpsc::SyncSender<u8>, tx: mpsc::Receiver<u8>) -> io::Result<IoSession> {
+    pub fn start(self) -> io::Result<IoSessionReadWrite> {
         // Spawn command via shell
         let mut child = std::process::Command::new("/bin/sh")
             .arg("-c")
@@ -27,19 +27,14 @@ impl ExecSession {
         let stdin = child.stdin.take().unwrap();
         let stdout = child.stdout.take().unwrap();
 
-        Ok(IoSession::new(stdout, stdin, rx, tx))
+        Ok(IoSessionReadWrite::new(stdout, stdin))
     }
 }
 
 impl IoSessionEndpoint for ExecSession {
-    fn start(
-        self,
-        rx: mpsc::SyncSender<u8>,
-        tx: mpsc::Receiver<u8>,
-        ready: impl FnOnce(std::io::Result<IoSession>) + Send + 'static,
-    ) {
+    fn start(self, ready: impl FnOnce(std::io::Result<IoSessionReadWrite>) + Send + 'static) {
         thread::spawn(move || {
-            let result = self.start(rx, tx);
+            let result = self.start();
             ready(result);
         });
     }

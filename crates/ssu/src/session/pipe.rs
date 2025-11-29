@@ -1,6 +1,7 @@
-use std::{fs::OpenOptions, io, path::PathBuf, sync::mpsc, thread};
+use std::{fs::OpenOptions, io, path::PathBuf, thread};
 
-use crate::session::{IoSessionEndpoint, io::IoSession};
+use crate::session::IoSessionEndpoint;
+use crate::session::io::IoSessionReadWrite;
 
 pub struct SinglePipeSession {
     path: PathBuf,
@@ -11,22 +12,17 @@ impl SinglePipeSession {
         SinglePipeSession { path }
     }
 
-    fn start(self, rx: mpsc::SyncSender<u8>, tx: mpsc::Receiver<u8>) -> io::Result<IoSession> {
+    fn start(self) -> io::Result<IoSessionReadWrite> {
         let pipe_r = OpenOptions::new().read(true).write(true).open(&self.path)?;
         let pipe_w = pipe_r.try_clone()?;
-        Ok(IoSession::new(pipe_r, pipe_w, rx, tx))
+        Ok(IoSessionReadWrite::new(pipe_r, pipe_w))
     }
 }
 
 impl IoSessionEndpoint for SinglePipeSession {
-    fn start(
-        self,
-        rx: mpsc::SyncSender<u8>,
-        tx: mpsc::Receiver<u8>,
-        ready: impl FnOnce(io::Result<IoSession>) + Send + 'static,
-    ) {
+    fn start(self, ready: impl FnOnce(io::Result<IoSessionReadWrite>) + Send + 'static) {
         thread::spawn(move || {
-            let result = self.start(rx, tx);
+            let result = self.start();
             ready(result);
         });
     }
@@ -42,22 +38,17 @@ impl DualPipeSession {
         DualPipeSession { recv, send }
     }
 
-    fn start(self, rx: mpsc::SyncSender<u8>, tx: mpsc::Receiver<u8>) -> io::Result<IoSession> {
+    fn start(self) -> io::Result<IoSessionReadWrite> {
         let pipe_r = OpenOptions::new().read(true).open(&self.recv)?;
         let pipe_w = OpenOptions::new().write(true).open(&self.send)?;
-        Ok(IoSession::new(pipe_r, pipe_w, rx, tx))
+        Ok(IoSessionReadWrite::new(pipe_r, pipe_w))
     }
 }
 
 impl IoSessionEndpoint for DualPipeSession {
-    fn start(
-        self,
-        rx: mpsc::SyncSender<u8>,
-        tx: mpsc::Receiver<u8>,
-        ready: impl FnOnce(io::Result<IoSession>) + Send + 'static,
-    ) {
+    fn start(self, ready: impl FnOnce(io::Result<IoSessionReadWrite>) + Send + 'static) {
         thread::spawn(move || {
-            let result = self.start(rx, tx);
+            let result = self.start();
             ready(result);
         });
     }

@@ -64,13 +64,13 @@ fn boot_io(
     channel: DUARTChannel,
     io: impl IoSessionEndpoint,
 ) -> Result<CommSession, std::io::Error> {
-    io.start(channel.tx, channel.rx, |session| {
+    io.start(|session| {
         match session {
             Ok(session) => {
                 let mut reader = session.reader;
                 let mut writer = session.writer;
-                let rx = session.rx;
-                let tx = session.tx;
+                let rx = channel.rx;
+                let tx = channel.tx;
                 let xoff = Arc::new(AtomicBool::new(false));
 
                 let xoff_clone = xoff.clone();
@@ -88,7 +88,7 @@ fn boot_io(
                             // Spin wait for XOFF to be cleared
                             thread::sleep(Duration::from_millis(10));
                         }
-                        match rx.send(buf[0]) {
+                        match tx.send(buf[0]) {
                             Ok(()) => {}
                             Err(e) => {
                                 error!("Failed to send byte to RX: {}", e);
@@ -100,7 +100,7 @@ fn boot_io(
 
                 thread::spawn(move || {
                     loop {
-                        match tx.recv() {
+                        match rx.recv() {
                             Ok(0x13) => {
                                 xoff.store(true, Ordering::Relaxed);
                             }

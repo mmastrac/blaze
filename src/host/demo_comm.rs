@@ -9,7 +9,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, List, ListDirection, ListState, Padding, Paragraph, Wrap},
 };
-use ssu::session::{SessionEndpoint, Ticked};
+use ssu::session::{SessionEndpoint, SessionRecvEndpoint, SessionSendEndpoint, Ticked};
 use tracing::trace;
 
 use crate::{host::comm::CommSession, machine::generic::duart::DUARTChannel};
@@ -531,6 +531,16 @@ impl SessionEndpoint for DemoComm {
         // our title
         self.pending.pending.borrow_mut().extend(b"\x1b[0;0H");
         self.pending.pending.borrow_mut().extend(b"\x1b#6");
+    }
+
+    fn split(
+        self: Box<Self>,
+    ) -> (
+        Box<dyn SessionRecvEndpoint + Send + 'static>,
+        Box<dyn SessionSendEndpoint + Send + 'static>,
+    ) {
+        // TODO
+        unimplemented!()
     }
 }
 

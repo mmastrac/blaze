@@ -1,8 +1,15 @@
-use std::{borrow::Cow, num::NonZeroU16, path::PathBuf, str::FromStr, sync::mpsc};
+use std::{borrow::Cow, num::NonZeroU16, path::PathBuf, str::FromStr};
 
 use clap::Parser;
 
-use crate::session::io::IoSession;
+#[cfg(feature = "pty")]
+use crate::session::pty::PtySession;
+use crate::session::{
+    exec::ExecSession,
+    io::{IoSessionReadWrite, boot_io},
+    loopback::LoopbackSession,
+    pipe::{DualPipeSession, SinglePipeSession},
+};
 
 pub mod exec;
 pub mod io;
@@ -33,6 +40,25 @@ pub enum SessionConfig {
 impl Default for SessionConfig {
     fn default() -> Self {
         Self::Loopback(String::new())
+    }
+}
+
+impl SessionConfig {
+    pub fn start(self) -> std::io::Result<Box<dyn SessionEndpoint + Send + 'static>> {
+        fn boot(
+            session: impl IoSessionEndpoint,
+        ) -> std::io::Result<Box<dyn SessionEndpoint + Send + 'static>> {
+            boot_io(session).map(|io| Box::new(io) as _)
+        }
+
+        match self {
+            SessionConfig::Loopback(initial) => Ok(Box::new(LoopbackSession::new(initial))),
+            SessionConfig::Pipe(path) => boot(SinglePipeSession::new(path)),
+            SessionConfig::Pipes { rx, tx } => boot(DualPipeSession::new(rx, tx)),
+            SessionConfig::Exec(cmd) => boot(ExecSession::new(cmd)),
+            #[cfg(feature = "pty")]
+            SessionConfig::ExecPty { cmd, rows, cols } => boot(PtySession::new(cmd, cols, rows)),
+        }
     }
 }
 
@@ -139,6 +165,25 @@ pub enum Ticked {
 pub trait SessionEndpoint {
     fn recv(&mut self) -> Ticked;
     fn send(&mut self, b: u8);
+
+    fn split(
+        self: Box<Self>,
+    ) -> (
+        Box<dyn SessionRecvEndpoint + Send + 'static>,
+        Box<dyn SessionSendEndpoint + Send + 'static>,
+    );
+}
+
+pub trait SessionRecvEndpoint {
+    fn recv(&mut self) -> Ticked;
+}
+
+pub trait SessionSendEndpoint {
+    fn send(&mut self, b: u8);
+}
+
+pub struct DynSessionEndpoint {
+    endpoint: Box<dyn SessionEndpoint>,
 }
 
 /// A I/O-based session endpoint that is started in a separate thread.
@@ -146,10 +191,5 @@ pub trait SessionEndpoint {
 /// should apply hardware flow control signals if available.
 pub trait IoSessionEndpoint {
     /// Start the session endpoint in a separate thread.
-    fn start(
-        self,
-        rx: mpsc::SyncSender<u8>,
-        tx: mpsc::Receiver<u8>,
-        ready: impl FnOnce(std::io::Result<IoSession>) + Send + 'static,
-    );
+    fn start(self, ready: impl FnOnce(std::io::Result<IoSessionReadWrite>) + Send + 'static);
 }
