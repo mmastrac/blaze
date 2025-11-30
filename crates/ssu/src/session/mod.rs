@@ -1,6 +1,6 @@
 use std::{borrow::Cow, num::NonZeroU16, path::PathBuf, str::FromStr};
 
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches, Parser};
 
 #[cfg(feature = "pty")]
 use crate::session::pty::PtySession;
@@ -62,14 +62,16 @@ impl SessionConfig {
     }
 }
 
-/// A sub-parser for the session arguments
+/// Options for a session connection.
 #[derive(clap::Parser, Debug)]
 #[command(disable_help_flag = true, disable_version_flag = true)]
 enum SessionSubcommand {
+    /// Connect the read and write ends of the session to each other.
     Loopback {
         /// Provide initial text inserted into the loopback connection
         initial: Option<String>,
     },
+    /// Connect the read and write ends of the session to separate pipes.
     Pipe {
         /// Provide a single pipe for both read and write.
         read_write: Option<PathBuf>,
@@ -78,13 +80,14 @@ enum SessionSubcommand {
         /// Provide a separate write pipe from the read pipe.
         write: Option<PathBuf>,
     },
+    /// Execute a command and connect to its pty or stdin/stdout.
     Exec {
         /// The command to execute.
         command: PathBuf,
         /// Allocate a PTY for the process.
         #[arg(long, default_value_t = false)]
         no_pty: bool,
-        #[arg(long, default_value_t = NonZeroU16::new(25).unwrap(), conflicts_with = "no_pty")]
+        #[arg(long, default_value_t = NonZeroU16::new(24).unwrap(), conflicts_with = "no_pty")]
         rows: NonZeroU16,
         #[arg(long, default_value_t = NonZeroU16::new(80).unwrap(), conflicts_with = "no_pty")]
         cols: NonZeroU16,
@@ -100,8 +103,22 @@ impl FromStr for SessionConfig {
             .map_err(|_| "Invalid argument")?;
         // Prepend a dummy program name - clap expects the first argument to be the program name
         args.insert(0, "session".to_string());
-        let subcommand = SessionSubcommand::try_parse_from(args)
-            .map_err(|s| format!("Invalid session configuration: {s:?}"))?;
+        let command = SessionSubcommand::command()
+            .name("<session>")
+            .bin_name("<--arg>")
+            .override_usage("<COMMAND>")
+            .disable_colored_help(true)
+            .disable_help_flag(true);
+        let arg_matches = command
+            .clone()
+            .try_get_matches_from(args)
+            .map_err(|s| format!("Invalid session configuration\n\n{}", s.with_cmd(&command)))?;
+        let subcommand = SessionSubcommand::from_arg_matches(&arg_matches).map_err(|s| {
+            format!(
+                "Invalid session sc configuration\n\n{}",
+                s.with_cmd(&command)
+            )
+        })?;
         Ok(match subcommand {
             SessionSubcommand::Loopback { initial } => {
                 SessionConfig::Loopback(initial.unwrap_or_default())
