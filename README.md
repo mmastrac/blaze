@@ -39,13 +39,13 @@ Textual UI:
 cargo run --all-features --release -- --display=graphics
 
 # Run the emulator with a graphical display and comm1 connected to "/bin/sh"
-cargo run --all-features --release -- --display=graphics --comm1-exec "/bin/sh"
+cargo run --all-features --release -- --display=graphics --comm1 'exec /bin/sh'
 
 # Run the emulator with a text display and comm1 connected to "/bin/sh"
-cargo run --all-features --release -- --display=text --comm1-exec "/bin/sh"
+cargo run --all-features --release -- --display=text --comm1 'exec /bin/sh'
 
 # Run the emulator in WASM and display the video output in a browser
-cargo run-wasm --bin blaze-vt --no-default-features --features=wasm --release
+cargo run-wasm --bin blaze-vt --no-default-features --features=wasm,demo --release
 ```
 
 Input is still a work in progress, but the following keys are supported:
