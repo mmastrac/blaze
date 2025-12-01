@@ -25,6 +25,7 @@ pub const OP_SELECT: u8 = 0x23; // '#' - Select session
 pub const OP_RESET: u8 = 0x2A; // '*' - Reset
 pub const OP_ADDCR: u8 = 0x2B; // '+' - Add credits
 pub const OP_VERIFY: u8 = 0x2D; // '-' - Verify credits
+pub const OP_CLOSE: u8 = 0x2E; // '.' - Close session
 pub const OP_DISABLE: u8 = 0x2F; // '/' - Disable
 pub const OP_ZERO: u8 = 0x30; // '0' - Zero credits
 pub const OP_SEND_BREAK: u8 = 0x3A; // ':' - Send break
@@ -32,6 +33,7 @@ pub const OP_REQUEST_RESTORE: u8 = 0x3B; // ';' - Request restore
 pub const OP_RESTORE: u8 = 0x3C; // '<' - Restore
 pub const OP_REPORT: u8 = 0x3D; // '=' - Report/Ack
 pub const OP_RESTORE_END: u8 = 0x3E; // '>' - Restore end
+pub const OP_QUERY: u8 = 0x3F; // '?' - Query session
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 #[repr(u8)]
@@ -42,6 +44,7 @@ pub enum SSUOpcode {
     Reset = OP_RESET,
     AddCredits = OP_ADDCR,
     Verify = OP_VERIFY,
+    Close = OP_CLOSE,
     Disable = OP_DISABLE,
     Zero = OP_ZERO,
     SendBreak = OP_SEND_BREAK,
@@ -49,6 +52,7 @@ pub enum SSUOpcode {
     Restore = OP_RESTORE,
     Report = OP_REPORT,
     RestoreEnd = OP_RESTORE_END,
+    Query = OP_QUERY,
 }
 
 impl TryFrom<u8> for SSUOpcode {
@@ -61,6 +65,7 @@ impl TryFrom<u8> for SSUOpcode {
             OP_RESET => Ok(SSUOpcode::Reset),
             OP_ADDCR => Ok(SSUOpcode::AddCredits),
             OP_VERIFY => Ok(SSUOpcode::Verify),
+            OP_CLOSE => Ok(SSUOpcode::Close),
             OP_DISABLE => Ok(SSUOpcode::Disable),
             OP_ZERO => Ok(SSUOpcode::Zero),
             OP_SEND_BREAK => Ok(SSUOpcode::SendBreak),
@@ -68,6 +73,7 @@ impl TryFrom<u8> for SSUOpcode {
             OP_RESTORE => Ok(SSUOpcode::Restore),
             OP_REPORT => Ok(SSUOpcode::Report),
             OP_RESTORE_END => Ok(SSUOpcode::RestoreEnd),
+            OP_QUERY => Ok(SSUOpcode::Query),
             _ => Err(ParseError::UnknownOpcode(value)),
         }
     }
@@ -135,14 +141,19 @@ pub enum SSUOp<const OPEN_LEN: usize> {
     /// Select: INTRO OP_SELECT sid TERM
     /// Parameters: session_id (u8)
     Select(u8),
-    /// Reset: INTRO OP_RESET TERM
-    Reset,
+    /// Reset: INTRO OP_RESET sid TERM
+    Reset(u8),
+    /// Close: INTRO OP_CLOSE sid status TERM
+    Close(u8, bool),
     /// Add credits: INTRO OP_ADDCR sid x y z TERM
     /// Parameters: session_id (u8), credits (usize)
-    AddCR { session_id: u8, credits: usize },
+    AddCredits { session_id: u8, credits: usize },
     /// Verify: INTRO OP_VERIFY sid TERM
     /// Parameters: session_id (u8)
     Verify(u8),
+    /// Query: INTRO OP_QUERY sid TERM
+    /// Parameters: session_id (u8)
+    Query(u8),
     /// Zero: INTRO OP_ZERO sid TERM
     /// Parameters: session_id (u8)
     Zero(u8),
@@ -265,6 +276,15 @@ impl<const OPEN_LEN: usize> SSUOp<OPEN_LEN> {
                     label: SSUString::Embedded(label, label_len as u8),
                 })
             }
+            OP_CLOSE => {
+                if params.len() != 2 {
+                    return Err(ParseError::InvalidParameter);
+                }
+                Ok(SSUOp::Close(
+                    params[0].wrapping_sub(b'A'),
+                    params[1] == b'@',
+                ))
+            }
             OP_SELECT => {
                 if params.is_empty() {
                     return Err(ParseError::InvalidParameter);
@@ -272,10 +292,10 @@ impl<const OPEN_LEN: usize> SSUOp<OPEN_LEN> {
                 Ok(SSUOp::Select(params[0].wrapping_sub(b'A')))
             }
             OP_RESET => {
-                if !params.is_empty() {
+                if params.len() != 1 {
                     return Err(ParseError::InvalidParameter);
                 }
-                Ok(SSUOp::Reset)
+                Ok(SSUOp::Reset(params[0].wrapping_sub(b'A')))
             }
             OP_ADDCR => {
                 let session_id = params[0].wrapping_sub(b'A');
@@ -302,7 +322,7 @@ impl<const OPEN_LEN: usize> SSUOp<OPEN_LEN> {
                     | ((y as u16 & 0x1F) << 5)
                     | (z as u16 & 0x1F)
                     | ((z5 as u16) << 11);
-                Ok(SSUOp::AddCR {
+                Ok(SSUOp::AddCredits {
                     session_id,
                     credits: credits as usize,
                 })
@@ -370,6 +390,12 @@ impl<const OPEN_LEN: usize> SSUOp<OPEN_LEN> {
                 }
                 Ok(SSUOp::Break(params[0].wrapping_sub(b'A')))
             }
+            OP_QUERY => {
+                if params.is_empty() {
+                    return Err(ParseError::InvalidParameter);
+                }
+                Ok(SSUOp::Query(params[0].wrapping_sub(b'A')))
+            }
             _ => Err(ParseError::UnknownOpcode(opcode)),
         }
     }
@@ -416,17 +442,27 @@ impl<const OPEN_LEN: usize> SSUOp<OPEN_LEN> {
                 buf[pos] = US;
                 pos += 1;
             }
+            SSUOp::Close(session_id, ok) => {
+                buf[pos] = OP_CLOSE;
+                pos += 1;
+                buf[pos] = *session_id + b'A';
+                pos += 1;
+                buf[pos] = if *ok { b'@' } else { b'e' };
+                pos += 1;
+            }
             SSUOp::Select(session_id) => {
                 buf[pos] = OP_SELECT;
                 pos += 1;
                 buf[pos] = *session_id + b'A';
                 pos += 1;
             }
-            SSUOp::Reset => {
+            SSUOp::Reset(session_id) => {
                 buf[pos] = OP_RESET;
                 pos += 1;
+                buf[pos] = *session_id + b'A';
+                pos += 1;
             }
-            SSUOp::AddCR {
+            SSUOp::AddCredits {
                 session_id,
                 credits,
             } => {
@@ -514,6 +550,12 @@ impl<const OPEN_LEN: usize> SSUOp<OPEN_LEN> {
                 buf[pos] = *session_id + b'A';
                 pos += 1;
             }
+            SSUOp::Query(session_id) => {
+                buf[pos] = OP_QUERY;
+                pos += 1;
+                buf[pos] = *session_id + b'A';
+                pos += 1;
+            }
         }
 
         buf[pos] = TERM;
@@ -533,7 +575,7 @@ mod tests {
         let msg: &[u8] = &[0x14, b'+', b'B', b'"', b'@', 0x1c];
         let op = SSUOp::<MAX_LABEL_LEN>::parse(msg);
         assert!(op.is_ok(), "Failed to parse AddCR message: {op:?}");
-        if let Ok(SSUOp::AddCR {
+        if let Ok(SSUOp::AddCredits {
             session_id,
             credits,
         }) = op
@@ -548,7 +590,7 @@ mod tests {
     #[test]
     fn test_serialize_add_credits_message() {
         let mut buf = [0u8; MAX_COMMAND_LEN];
-        let msg = SSUOp::<MAX_LABEL_LEN>::AddCR {
+        let msg = SSUOp::<MAX_LABEL_LEN>::AddCredits {
             session_id: 1,
             credits: 64,
         }

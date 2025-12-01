@@ -124,6 +124,12 @@ impl IntoIterator for SessionHandles {
     }
 }
 
+enum RecvResult {
+    NoData,
+    NoCredits,
+    Data(u8),
+}
+
 #[derive(Clone)]
 struct ServerHandle {
     server: Arc<Mutex<Server>>,
@@ -156,9 +162,21 @@ impl ServerHandle {
         }
     }
 
-    pub fn recv(&self, session: u8) -> RingBufferHandle<PEER_TO_SESSION_SIZE, u8> {
-        let server = self.lock();
-        server.sessions[session as usize].recv.clone()
+    pub fn try_recv(&self, session_id: u8) -> RecvResult {
+        let mut server = self.lock();
+        let session = &mut server.sessions[session_id as usize];
+        if session.recv.is_empty() {
+            return RecvResult::NoData;
+        }
+        if !session.credits.try_take_one().is_ok() {
+            trace!("No credits remaining for session {session_id}");
+            return RecvResult::NoCredits;
+        }
+        trace!("Credits remaining: {}", session.credits.count);
+        match session.recv.pop_sync() {
+            Some(b) => RecvResult::Data(b),
+            None => RecvResult::NoData,
+        }
     }
 
     fn lock(&self) -> MutexGuard<Server> {
@@ -304,6 +322,14 @@ impl Credits {
         self.count = 0;
     }
 
+    pub fn try_take_one(&mut self) -> Result<(), ()> {
+        if self.count == 0 {
+            return Err(());
+        }
+        self.count = self.count.saturating_sub(1);
+        Ok(())
+    }
+
     pub async fn take_one(&mut self) {
         loop {
             if self.count == 0 {
@@ -399,6 +425,9 @@ impl ServerRead {
     /// and fairness.
     pub async fn read(&mut self) -> Result<u8, ServerError> {
         trace!("Entering read");
+
+        // If XON arrives in the peer stream unencoded, we treat that as an
+        // emergency stop for all comms.
         self.server.wait_xon().await;
         trace!("XON");
 
@@ -446,10 +475,20 @@ impl ServerRead {
             // another session a chance.
             if self.fairness_counter > 0 {
                 if let Some(active) = self.active_session_to_peer {
-                    let recv = self.server.recv(active);
                     self.fairness_counter = self.fairness_counter.saturating_sub(1);
-                    if let Some(b) = recv.pop_sync() {
-                        return Ok(b);
+                    match self.server.try_recv(active) {
+                        RecvResult::Data(b) => return Ok(b),
+                        RecvResult::NoData => {}
+                        RecvResult::NoCredits => {
+                            // We should not hit this case because the remote
+                            // end should have granted us more, but it's
+                            // possible we've lost data on the line somewhere.
+                            let mut buf = [0; MAX_COMMAND_LEN];
+                            self.outgoing_command_queue_bytes.replace_with_slice(
+                                SSUOp::<0>::Verify(active).serialize(&mut buf).unwrap(),
+                            );
+                            continue 'read;
+                        }
                     }
                 }
             }
@@ -457,22 +496,35 @@ impl ServerRead {
             // If the action session is idle, we'll check the other sessions. To
             // be fair here we should keep some sort of LRU list.
             for i in 0..self.server.max_session() {
-                if let Some(b) = self.server.recv(i).pop_sync() {
-                    self.fairness_counter = FAIRNESS_CHUNK_SIZE;
-                    if self.active_session_to_peer != Some(i) {
-                        trace!("Activating session {i}");
-                        self.active_session_to_peer = Some(i);
+                match self.server.try_recv(i) {
+                    RecvResult::Data(b) => {
+                        self.fairness_counter = FAIRNESS_CHUNK_SIZE;
+                        if self.active_session_to_peer != Some(i) {
+                            trace!("Activating session {i}");
+                            self.active_session_to_peer = Some(i);
+                            let mut buf = [0; MAX_COMMAND_LEN];
+                            debug_assert!(self.outgoing_command_queue.is_empty());
+                            debug_assert!(self.outgoing_command_queue_bytes.is_empty());
+                            self.outgoing_command_queue_bytes.replace_with_slice(
+                                SSUOp::<0>::Select(i).serialize(&mut buf).unwrap(),
+                            );
+                            // We already have this byte, so send it as part of the command queue
+                            self.outgoing_command_queue_bytes.push(b);
+                            continue 'read;
+                        }
+                        trace!("Sending session {i} byte: {b:02X}");
+                        return Ok(b);
+                    }
+                    RecvResult::NoData => {}
+                    RecvResult::NoCredits => {
+                        // We should not hit this case because the remote
+                        // end should have granted us more, but it's
+                        // possible we've lost data on the line somewhere.
                         let mut buf = [0; MAX_COMMAND_LEN];
-                        debug_assert!(self.outgoing_command_queue.is_empty());
-                        debug_assert!(self.outgoing_command_queue_bytes.is_empty());
                         self.outgoing_command_queue_bytes
-                            .replace_with_slice(SSUOp::<0>::Select(i).serialize(&mut buf).unwrap());
-                        // We already have this byte, so send it as part of the command queue
-                        self.outgoing_command_queue_bytes.push(b);
+                            .replace_with_slice(SSUOp::<0>::Verify(i).serialize(&mut buf).unwrap());
                         continue 'read;
                     }
-                    trace!("Sending session {i} byte: {b:02X}");
-                    return Ok(b);
                 }
             }
 
@@ -502,9 +554,31 @@ impl ServerWrite {
                 trace!("Setting XOFF");
                 self.server.set_xon(false);
             }
-            0x3 | 0x4 => {
+            0x3 => {
                 // todo: ctrl+c or ctrl+d exits the server for now
                 std::process::exit(1);
+            }
+            0x4 => {
+                let active = self.server.lock().active_session_from_peer.unwrap();
+                self.outgoing_command_queue
+                    .push(SSUOp::Verify(active))
+                    .await;
+                self.server.lock().stuck.maybe_wake();
+            }
+            0x5 => {
+                let active = self.server.lock().active_session_from_peer.unwrap();
+                self.outgoing_command_queue.push(SSUOp::Reset(active)).await;
+                self.server.lock().stuck.maybe_wake();
+            }
+            0x6 => {
+                let active = self.server.lock().active_session_from_peer.unwrap();
+                self.outgoing_command_queue
+                    .push(SSUOp::Close(active, false))
+                    .await;
+                self.server.lock().stuck.maybe_wake();
+                let active = self.server.lock().active_session_from_peer.unwrap();
+                self.outgoing_command_queue.push(SSUOp::Query(active)).await;
+                self.server.lock().stuck.maybe_wake();
             }
             INTRO => {
                 // Always reset the command queue on INTRO
@@ -566,7 +640,7 @@ impl ServerWrite {
 
     async fn process_op(&mut self, op: SSUOp<MAX_LABEL_LEN>) {
         match op {
-            SSUOp::Probe(state, protocol_variant, max_sessions) => {
+            SSUOp::Probe(_state, protocol_variant, max_sessions) => {
                 let max_sessions = max_sessions.max(self.server.max_session());
                 self.outgoing_command_queue
                     .push(SSUOp::Probe(
@@ -574,6 +648,15 @@ impl ServerWrite {
                         protocol_variant,
                         max_sessions,
                     ))
+                    .await;
+            }
+            SSUOp::Disable => {
+                self.outgoing_command_queue
+                    .push(SSUOp::Report {
+                        op: SSUOpcode::Disable,
+                        session_id: None,
+                        code: 0,
+                    })
                     .await;
             }
             SSUOp::Select(session_id) => {
@@ -586,17 +669,31 @@ impl ServerWrite {
                     })
                     .await;
                 self.outgoing_command_queue
-                    .push(SSUOp::AddCR {
+                    .push(SSUOp::AddCredits {
                         session_id,
                         credits: RECV_CREDITS_TOP_UP,
                     })
                     .await;
             }
-            SSUOp::AddCR {
+            SSUOp::AddCredits {
                 session_id,
                 credits,
             } => {
-                // todo
+                self.server.lock().sessions[session_id as usize]
+                    .credits
+                    .add(credits);
+            }
+            SSUOp::Zero(session_id) => {
+                self.server.lock().sessions[session_id as usize]
+                    .credits
+                    .zero();
+                self.outgoing_command_queue
+                    .push(SSUOp::Report {
+                        op: SSUOpcode::Zero,
+                        session_id: Some(session_id),
+                        code: 0,
+                    })
+                    .await;
             }
             SSUOp::Open { session_id, label } => {
                 info!("Opening session {label:?}",);
@@ -617,7 +714,7 @@ impl ServerWrite {
                     })
                     .await;
                 self.outgoing_command_queue
-                    .push(SSUOp::AddCR {
+                    .push(SSUOp::AddCredits {
                         session_id,
                         credits: RECV_CREDITS_TOP_UP,
                     })
@@ -658,7 +755,7 @@ impl ServerWrite {
                 code,
             } => {
                 self.outgoing_command_queue
-                    .push(SSUOp::AddCR {
+                    .push(SSUOp::AddCredits {
                         session_id,
                         credits: RECV_CREDITS_TOP_UP,
                     })
@@ -675,10 +772,40 @@ impl ServerWrite {
                 }
             }
             SSUOp::Report {
+                op: SSUOpcode::Close,
+                session_id: Some(session_id),
+                code,
+            } => {
+                // TODO: We can use this to detect a dead peer
+            }
+            SSUOp::Report {
                 op: SSUOpcode::RestoreEnd,
                 session_id: None,
                 code,
-            } => {}
+            } => {
+                // TODO: We can use this to detect a dead peer
+            }
+            SSUOp::Report {
+                op: SSUOpcode::Verify,
+                session_id: Some(session_id),
+                code,
+            } => {
+                // TODO: We can use this to detect a dead peer
+            }
+            SSUOp::Report {
+                op: SSUOpcode::Query,
+                session_id: Some(session_id),
+                code,
+            } => {
+                // TODO: We can use this to detect a dead peer
+            }
+            SSUOp::Report {
+                op: SSUOpcode::Reset,
+                session_id: Some(session_id),
+                code,
+            } => {
+                // TODO: We can use this to detect a dead peer
+            }
             SSUOp::Report {
                 op: SSUOpcode::Select,
                 session_id: Some(_session_id),

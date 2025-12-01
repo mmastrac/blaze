@@ -30,6 +30,7 @@ The following opcodes are supported:
 | `#`    | `0x23` | `SELECT_SESSION`  | Select session  |
 | `*`    | `0x2A` | `RESET`           | Reset           |
 | `+`    | `0x2B` | `ADD_CREDITS`     | Add credits     |
+| `,`    | `0x2C` | `UNUSED`          | (unused opcode) |
 | `-`    | `0x2D` | `VERIFY_CREDITS`  | Verify credits  |
 | `.`    | `0x2E` | `CLOSE_SESSION`   | Close session   |
 | `/`    | `0x2F` | `DISABLE`         | Disable         |
@@ -40,6 +41,17 @@ The following opcodes are supported:
 | `=`    | `0x3D` | `REPORT`          | Report/Ack      |
 | `>`    | `0x3E` | `RESTORE_END`     | Restore end     |
 | `?`    | `0x3F` | `QUERY_SESSION`   | Query session   |
+
+## Escape Sequences
+
+The following escape sequences are supported to encode control characters in a
+way that avoids them being interpreted by the SSU-level server:
+
+- To send a literal `0x11` (XON) to a session, send `0x14` `Q`.
+- To send a literal `0x13` (XOFF) to a session, send `0x14` `S`.
+- To send a literal `0x14` (DC4) to a session, send `0x14` `T`.
+
+---
 
 ### Probe
 
@@ -67,8 +79,16 @@ Response to second enable:
 - `=!a@` ("OK")
 - `=!a<x>` ("failed to enable")
 
-If the remote side has live sessions, the local side should send `;` to request
-a session restore.
+Expected Responses:
+
+When receiving a Probe, respond with a Probe message indicating current
+state(`!AAB` for enabled, `!BAB` for enabled with sessions). The terminal side
+will respond with a Report acknowledging Probe: `=!a@` ("OK").
+
+If the remote side has live sessions, the terminal side should send `;` to
+request a session restore.
+
+---
 
 ### Open session
 
@@ -79,6 +99,12 @@ Parameters:
 - `<x>`: Session ID (A or B)
 - `<y>`: Session name, surrounded by `US` (`0x1F`) bytes (or `@` for null name)
 
+Expected Responses:
+
+When receiving an Open message, respond with a Report acknowledging Open:
+`="<x>@` (where `<x>` is the session ID). The receiver MAY also consider sending
+an AddCredits message for that session.
+
 ### Select session
 
 Format: `#<x>`
@@ -87,6 +113,15 @@ Parameters:
 
 - `<x>`: Session ID (A or B)
 
+Expected Responses:
+
+When receiving a Select message, respond with:
+
+1. A Report acknowledging Select: `=#<x>@` (where `<x>` is the session ID).
+2. The receiver MAY consider sending an AddCredits message for that session.
+
+---
+
 ### Reset session
 
 Format: `*<x>`
@@ -94,6 +129,13 @@ Format: `*<x>`
 Parameters:
 
 - `<x>`: Session ID (A or B)
+
+Expected Responses:
+
+When receiving a Reset message, respond with a Report acknowledging Reset:
+`=*<x>@` (where `<x>` is the session ID)
+
+---
 
 ### Add credits
 
@@ -109,6 +151,14 @@ Parameters:
 
 Credits = `{ z5, x4, x3, x2, x1, x0, y4, y3, y2, y1, y0, z4, z3, z2, z1, z0 }`
 
+Expected Responses:
+
+When receiving an AddCredits message, no response is sent (credits are consumed
+internally as data is sent). The receiver sending more data is implicit
+acknowledgement of the AddCredits message.
+
+---
+
 ### Verify credits
 
 Sent when the local side runs out of credits, as an add credits message may have
@@ -120,22 +170,40 @@ Parameters:
 
 - `<x>`: Session ID (A or B)
 
+Expected Responses:
+
+When receiving a Verify message, respond with a Report acknowledging Verify:
+`=-a@` ("OK") and optionally send an AddCredits message for that session if
+there should be more credits available.
+
+---
+
 ### Close session
 
-Format: `.<x><y>"`
+Format: `.<x><y>`
 
 Parameters:
 
 - `<x>`: Session ID (A or B)
 - `<y>`: Termination reason (`@` normal, `e` error)
 
+Expected Responses:
+
+When receiving a Close message, respond with a Report acknowledging Close:
+`=.<x>@` (where `<x>` is the session ID)
+
+---
+
 ### Disable session
 
 Format: `/@@@`
 
-Response:
+Expected Responses:
 
-- `=/a@` ("OK")
+When receiving a Disable message, respond with a Report acknowledging Disable:
+`=/a@` ("OK")
+
+---
 
 ### Zero credits
 
@@ -145,17 +213,52 @@ Parameters:
 
 - `<x>`: Session ID (A or B)
 
-Response:
+Expected Responses:
 
-- `=0<x>@` ("OK")
+When receiving a Zero message, respond with a Report acknowledging Zero:
+`=0<x>@` ("OK", where `<x>` is the session ID)
+
+---
+
+### Send break
+
+Format: `:<x>`
+
+Parameters:
+
+- `<x>`: Session ID (A or B)
+
+Expected Responses:
+
+When receiving a SendBreak message, no further response is sent (break is
+delivered to the session)
+
+---
 
 ### Request restore
 
 Format: `;`
 
+Expected Responses:
+
+- When receiving a RequestRestore message, respond with:
+  1. A Report acknowledging RequestRestore: `=;a@`
+  2. A Restore message (`<`)
+  3. Optional open messages for each session to restore
+  4. A RestoreEnd message (if last session)
+
+---
+
 ### Restore start
 
 Format: `<`
+
+Expected Responses:
+
+When receiving a Restore message, respond with a Report acknowledging Restore:
+`=<a@` ("OK").
+
+---
 
 ### Response/Ack
 
@@ -164,12 +267,25 @@ Format: `=<x><y><z>`
 Parameters:
 
 - `<x>`: Opcode being acknowledged
-- `<y>`: Parameter (`a` seems to be used for "all")
+- `<y>`: Parameter (`a` seems to be used for "all", or session ID)
 - `<z>`: Result code (`@` OK, `e` error)
+
+Expected Responses:
+
+When receiving a Report message, no further response is sent.
+
+---
 
 ### Restore end
 
 Format: `>`
+
+Expected Responses:
+
+When receiving a RestoreEnd message, respond with a Report acknowledging
+RestoreEnd: `=>a@`
+
+---
 
 ### Query session
 
@@ -179,9 +295,10 @@ Parameters:
 
 - `<x>`: Session ID (A or B)
 
-Response:
+Expected Responses:
 
-- `?<x>@` ("OK")
+Respond with either an OK or error report as appropriate: `=?<x>@` ("OK", where
+`<x>` is the session ID) or `=?<x>e` ("ERROR", where `<x>` is the session ID)
 
 ## Protocol
 
