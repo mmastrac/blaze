@@ -104,12 +104,15 @@ Parameters:
 - `<w>`: Session ID (`A` or `B`)
 - `<x>`: 5 bits of credit data
 - `<y>`: 5 bits of credit data
-- `<z>`: 5 bits of credit data (0x40 bit must be set here, 0x10 bit is moved to
+- `<z>`: 5 bits of credit data (0x40 bit must be set here, 0x20 bit is moved to
   high bit of credit)
 
 Credits = `{ z5, x4, x3, x2, x1, x0, y4, y3, y2, y1, y0, z4, z3, z2, z1, z0 }`
 
 ### Verify credits
+
+Sent when the local side runs out of credits, as an add credits message may have
+been lost in transit.
 
 Format: `-<x>`
 

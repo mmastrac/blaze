@@ -1,18 +1,21 @@
-use std::cell::{Cell, RefCell};
-use std::future::poll_fn;
+use std::array;
+use std::future::{Future, poll_fn};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::task::{Poll, Waker};
 use std::time::Duration;
-use std::{array, io, slice, thread};
 
-use tracing::{info, trace};
+use tracing::{error, info, trace, warn};
 
-use crate::{INTRO, OP_ADDCR, OP_PROBE, OP_SELECT, TERM};
+use crate::buffer::{RingBufferHandle, SyncRingBuffer};
+use crate::ops::{
+    INTRO, MAX_COMMAND_LEN, MAX_LABEL_LEN, OP_OPEN, OP_REQUEST_RESTORE, OP_RESTORE, OP_RESTORE_END,
+    OP_SELECT, OP_VERIFY, SSUOp, SSUOpcode, SSUState, SSUString, TERM,
+};
 
 /// The maximum number of bytes to send in a single chunk before
 /// trying to poll the other session.
-const CHUNK_SIZE: usize = 32;
+const FAIRNESS_CHUNK_SIZE: usize = 32;
 
 const RECV_CREDITS_LOW_WATER_MARK: usize = 128;
 const RECV_CREDITS_TOP_UP: usize = 1024;
@@ -26,7 +29,7 @@ const SESSION_TO_PEER_SIZE: usize = 1024;
 const PEER_TO_SESSION_SIZE: usize = 16 * 1024;
 
 /// The maximum internal buffer size to queue for the peer's command queue.
-const PEER_COMMAND_QUEUE_SIZE: usize = 256;
+const PEER_COMMAND_QUEUE_SIZE: usize = 32;
 
 const MAX_SESSION_COUNT: usize = 4;
 
@@ -36,9 +39,8 @@ const MAX_SESSION_COUNT: usize = 4;
 /// Data is both pushed and pulled externally for the peer and individual
 /// sessions, while this server manages the credits and routing for data.
 pub struct Server {
-    active_session: Option<u8>,
-    outgoing_command_queue: Arc<Mutex<SyncRingBuffer<PEER_COMMAND_QUEUE_SIZE>>>,
-    select_command: Arc<Mutex<SyncRingBuffer<4>>>,
+    active_session_from_peer: Option<u8>,
+    /// The command queue for the peer.
     xon: Xon,
     sessions: [Session; MAX_SESSION_COUNT],
     max_sessions: u8,
@@ -49,21 +51,17 @@ pub struct Server {
 
 impl Server {
     pub fn new(max_sessions: u8) -> ServerHandles {
+        // This is shared by a number of actors in the system
+        let outgoing_command_queue = RingBufferHandle::default();
+        outgoing_command_queue.push_sync(SSUOp::Probe(SSUState::Disabled, 1, max_sessions));
+
         let server = Server {
             sessions: Default::default(),
-            outgoing_command_queue: Default::default(),
-            select_command: Default::default(),
-            xon: Default::default(),
-            active_session: Default::default(),
+            xon: Xon::new(),
+            active_session_from_peer: Default::default(),
             stuck: Default::default(),
             max_sessions,
         };
-        send_probe_message(
-            &mut *server.outgoing_command_queue.lock().unwrap(),
-            0,
-            0,
-            max_sessions,
-        );
 
         let server = ServerHandle {
             server: Arc::new(Mutex::new(server)),
@@ -72,12 +70,11 @@ impl Server {
         let server_read = {
             let server = server.clone();
             let lock = server.lock();
-            let outgoing_command_queue = lock.outgoing_command_queue.clone();
-            let select_buffer = lock.select_command.clone();
             drop(lock);
             ServerRead {
-                outgoing_command_queue,
-                select_buffer,
+                active_session_to_peer: None,
+                outgoing_command_queue: outgoing_command_queue.clone(),
+                outgoing_command_queue_bytes: Default::default(),
                 server,
                 fairness_counter: 0,
             }
@@ -91,7 +88,6 @@ impl Server {
                 },
                 SessionWrite {
                     buffer: Default::default(),
-                    server: server.clone(),
                 },
             )
         });
@@ -101,6 +97,7 @@ impl Server {
             server_write: ServerWrite {
                 server: server.clone(),
                 incoming_command_queue: Default::default(),
+                outgoing_command_queue,
             },
             session_handles: SessionHandles { sessions, count: 0 },
         }
@@ -150,107 +147,61 @@ impl ServerHandle {
         }
     }
 
+    pub fn active_session_recv(&self) -> Option<RingBufferHandle<PEER_TO_SESSION_SIZE, u8>> {
+        let server = self.lock();
+        if let Some(active) = server.active_session_from_peer {
+            Some(server.sessions[active as usize].recv.clone())
+        } else {
+            None
+        }
+    }
+
+    pub fn recv(&self, session: u8) -> RingBufferHandle<PEER_TO_SESSION_SIZE, u8> {
+        let server = self.lock();
+        server.sessions[session as usize].recv.clone()
+    }
+
     fn lock(&self) -> MutexGuard<Server> {
         self.server.lock().unwrap()
+    }
+
+    async fn await_stuck(&self) {
+        let stuck = self.lock().stuck.clone();
+        stuck.wait().await;
+    }
+
+    fn max_session(&self) -> u8 {
+        self.lock().max_sessions
     }
 }
 
 #[derive(Default)]
 pub struct Session {
-    send: RingBufferHandle<SESSION_TO_PEER_SIZE>,
-    recv: RingBufferHandle<PEER_TO_SESSION_SIZE>,
+    send: RingBufferHandle<SESSION_TO_PEER_SIZE, u8>,
+    recv: RingBufferHandle<PEER_TO_SESSION_SIZE, u8>,
     credits: Credits,
     peer_credits: usize,
 }
 
-fn send_probe_message<const SIZE: usize>(
-    queue: &mut SyncRingBuffer<SIZE>,
-    state: u8,
-    protocol_variant: u8,
-    max_sessions: u8,
-) {
-    queue.push(INTRO);
-    queue.push(OP_PROBE);
-    queue.push(b'A' + state);
-    queue.push(b'A' + protocol_variant);
-    queue.push(b'A' + max_sessions - 1);
-    queue.push(TERM);
-}
-
-fn send_select_message<const SIZE: usize>(queue: &mut SyncRingBuffer<SIZE>, session_id: u8) {
-    queue.push(INTRO);
-    queue.push(OP_SELECT);
-    queue.push(b'A' + session_id);
-    queue.push(TERM);
-}
-
-fn send_add_credits_message<const SIZE: usize>(
-    queue: &mut SyncRingBuffer<SIZE>,
-    session_id: u8,
-    credits: usize,
-) {
-    queue.push(INTRO);
-    queue.push(OP_ADDCR);
-    queue.push(b'A' + session_id);
-
-    // Credits = { z5, x4, x3, x2, x1, x0, y4, y3, y2, y1, y0, z4, z3, z2, z1, z0 }
-
-    let total = credits as u16;
-    let x = ((total >> 10) & 0x1F) as u8;
-    let y = ((total >> 5) & 0x1F) as u8;
-    let mut z = (total & 0x1F) as u8;
-
-    if (total & 0x8000) != 0 {
-        z |= 0x20; // set z5 (bit5 of z byte)
-    }
-
-    queue.push(x + b'@');
-    queue.push(y + b'@');
-    queue.push(z + b'@');
-    queue.push(TERM);
-}
-
-/// Run the server against a set of session endpoints and a peer.
-// pub fn run(
-//     sessions: Vec<Box<dyn SessionEndpoint + Send + 'static>>,
-//     peer_in: impl io::Read,
-//     peer_out: impl io::Write,
-// ) -> Result<(), io::Error> {
-//     let server = Server::new(sessions.len() as u8);
-
-//     for (session, server_session) in sessions.into_iter().zip(&server.sessions) {
-//         let (mut recv, mut send) = session.split();
-//         thread::spawn(move || {
-//             loop {
-//                 match recv.recv() {
-//                     _ => {}
-//                 }
-//             }
-//         });
-//         thread::spawn(move || {
-//             loop {
-//                 _ = &send;
-//             }
-//         });
-//     }
-
-//     loop {}
-// }
-
 #[cfg(feature = "server")]
 pub async fn run_async() {
+    use std::os::fd::AsFd;
+
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     trace!("Entering run_async");
     let server = Server::new(2);
     let mut server_read = server.server_read;
-    let mut stdout = tokio::io::stdout();
+    let owned = std::io::stdout().as_fd().try_clone_to_owned().unwrap();
+    let file = std::fs::File::from(owned);
+    let mut stdout = tokio::fs::File::from_std(file);
     tokio::task::spawn(async move {
         trace!("Entering stdout");
         loop {
             let Ok(b) = server_read.read().await else {
                 return;
             };
+            trace!("Writing byte {b:02X} to stdout");
             let Ok(_) = stdout.write_u8(b).await else {
                 return;
             };
@@ -264,6 +215,7 @@ pub async fn run_async() {
             let Ok(b) = stdin.read_u8().await else {
                 return;
             };
+            trace!("Got byte {b:02X} from stdin");
             let Ok(_) = server_write.write(b).await else {
                 return;
             };
@@ -276,15 +228,10 @@ pub async fn run_async() {
                 let Ok(b) = read.read().await else {
                     return;
                 };
-            }
-        });
-        tokio::task::spawn(async move {
-            loop {
-                for b in b"Hello world\n" {
-                    let Ok(()) = write.write(*b).await else {
-                        return;
-                    };
-                }
+                trace!("Got byte {b:02X} from session, looping back");
+                let Ok(()) = write.write(b).await else {
+                    return;
+                };
             }
         });
     }
@@ -295,7 +242,7 @@ pub async fn run_async() {
 }
 
 #[derive(Default)]
-struct WakerHandle {
+pub(crate) struct WakerHandle {
     registering: AtomicBool,
     waker: Mutex<Option<Waker>>,
 }
@@ -308,7 +255,7 @@ impl WakerHandle {
         }
     }
 
-    pub fn wait(&self) -> impl Future<Output = ()> {
+    pub fn wait(&self) -> impl Future<Output = ()> + '_ {
         assert!(self.waker.lock().unwrap().is_none());
         assert!(!self.registering.swap(true, Ordering::AcqRel));
         poll_fn(|cx| {
@@ -374,7 +321,6 @@ impl Credits {
     }
 }
 
-#[derive(Default)]
 struct Xon {
     waker: Arc<WakerHandle>,
     xon: bool,
@@ -402,177 +348,8 @@ impl Xon {
     }
 }
 
-struct SyncRingBuffer<const SIZE: usize> {
-    buffer: [u8; SIZE],
-    write_index: usize,
-    read_index: usize,
-}
-
-impl<const SIZE: usize> Default for SyncRingBuffer<SIZE> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<const SIZE: usize> SyncRingBuffer<SIZE> {
-    pub fn new() -> Self {
-        Self {
-            buffer: [0; SIZE],
-            write_index: 0,
-            read_index: 0,
-        }
-    }
-
-    pub fn push(&mut self, b: u8) {
-        assert!(!self.is_full());
-        self.buffer[self.write_index] = b;
-        self.write_index = (self.write_index + 1) % SIZE;
-    }
-
-    pub fn pop(&mut self) -> Option<u8> {
-        if self.read_index == self.write_index {
-            return None;
-        }
-        let b = self.buffer[self.read_index];
-        self.read_index = (self.read_index + 1) % SIZE;
-        Some(b)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.read_index == self.write_index
-    }
-
-    pub fn is_full(&self) -> bool {
-        (self.write_index + 1) % SIZE == self.read_index
-    }
-
-    pub fn clear(&mut self) {
-        self.read_index = self.write_index;
-    }
-
-    pub fn len(&self) -> usize {
-        if self.write_index >= self.read_index {
-            self.write_index - self.read_index
-        } else {
-            SIZE - self.read_index + self.write_index
-        }
-    }
-}
-
-struct RingBuffer<const SIZE: usize> {
-    buffer: [u8; SIZE],
-    write_waker: Arc<WakerHandle>,
-    read_waker: Arc<WakerHandle>,
-    write_index: usize,
-    read_index: usize,
-}
-
-impl<const SIZE: usize> Default for RingBuffer<SIZE> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<const SIZE: usize> RingBuffer<SIZE> {
-    pub fn new() -> Self {
-        Self {
-            buffer: [0; SIZE],
-            write_waker: Arc::new(WakerHandle::new()),
-            read_waker: Arc::new(WakerHandle::new()),
-            write_index: 0,
-            read_index: 0,
-        }
-    }
-
-    /// Check if the buffer is full
-    fn is_full(&self) -> bool {
-        (self.write_index + 1) % self.buffer.len() == self.read_index
-    }
-
-    /// Check if the buffer is empty
-    fn is_empty(&self) -> bool {
-        self.read_index == self.write_index
-    }
-
-    pub async fn push(this: &Arc<Mutex<Self>>, b: u8) {
-        // Wait if buffer is full
-        loop {
-            let waker = {
-                let mut lock = this.lock().unwrap();
-                if !lock.is_full() {
-                    let write_index = lock.write_index;
-                    lock.buffer[write_index] = b;
-                    lock.write_index = (lock.write_index + 1) % lock.buffer.len();
-
-                    // Wake any waiting readers
-                    lock.read_waker.maybe_wake();
-                    return;
-                }
-                lock.write_waker.clone()
-            };
-            waker.wait().await;
-        }
-    }
-
-    pub async fn pop(this: &Arc<Mutex<Self>>) -> u8 {
-        // Wait if buffer is empty
-        loop {
-            let waker = {
-                let mut lock = this.lock().unwrap();
-                if !lock.is_empty() {
-                    // Pop the byte
-                    let b = lock.buffer[lock.read_index];
-                    lock.read_index = (lock.read_index + 1) % lock.buffer.len();
-
-                    // Wake any waiting writers
-                    lock.write_waker.maybe_wake();
-
-                    return b;
-                }
-                lock.read_waker.clone()
-            };
-            waker.wait().await;
-        }
-    }
-
-    pub fn pop_sync(&mut self) -> Option<u8> {
-        if self.is_empty() {
-            return None;
-        }
-        let b = self.buffer[self.read_index];
-        self.read_index = (self.read_index + 1) % self.buffer.len();
-        Some(b)
-    }
-}
-
-#[derive(Clone, Default)]
-pub struct RingBufferHandle<const SIZE: usize> {
-    buffer: Arc<Mutex<RingBuffer<SIZE>>>,
-}
-
-impl<const SIZE: usize> RingBufferHandle<SIZE> {
-    pub fn new() -> Self {
-        Self {
-            buffer: Arc::new(Mutex::new(RingBuffer::new())),
-        }
-    }
-
-    pub async fn push(&self, b: u8) {
-        RingBuffer::push(&self.buffer, b).await;
-    }
-
-    pub async fn pop(&self) -> u8 {
-        RingBuffer::pop(&self.buffer).await
-    }
-
-    pub fn pop_sync(&self) -> Option<u8> {
-        let mut lock = self.buffer.lock().unwrap();
-        lock.pop_sync()
-    }
-}
-
 pub struct SessionRead {
-    buffer: RingBufferHandle<PEER_TO_SESSION_SIZE>,
+    buffer: RingBufferHandle<PEER_TO_SESSION_SIZE, u8>,
     server: ServerHandle,
 }
 
@@ -584,8 +361,7 @@ impl SessionRead {
 }
 
 pub struct SessionWrite {
-    buffer: RingBufferHandle<SESSION_TO_PEER_SIZE>,
-    server: ServerHandle,
+    buffer: RingBufferHandle<SESSION_TO_PEER_SIZE, u8>,
 }
 
 impl SessionWrite {
@@ -604,8 +380,9 @@ pub enum SessionError {
 }
 
 pub struct ServerRead {
-    outgoing_command_queue: Arc<Mutex<SyncRingBuffer<PEER_COMMAND_QUEUE_SIZE>>>,
-    select_buffer: Arc<Mutex<SyncRingBuffer<4>>>,
+    active_session_to_peer: Option<u8>,
+    outgoing_command_queue: RingBufferHandle<PEER_COMMAND_QUEUE_SIZE, SSUOp<0>>,
+    outgoing_command_queue_bytes: SyncRingBuffer<MAX_COMMAND_LEN, u8>,
     fairness_counter: usize,
     server: ServerHandle,
 }
@@ -623,42 +400,106 @@ impl ServerRead {
     pub async fn read(&mut self) -> Result<u8, ServerError> {
         trace!("Entering read");
         self.server.wait_xon().await;
-        if let Some(b) = self.outgoing_command_queue.lock().unwrap().pop() {
-            trace!("Sending command byte: {b:02X}");
-            return Ok(b);
-        }
-        trace!("No command bytes to send");
-        loop {
-            for i in 0..self.server.lock().max_sessions {
-                let session = &self.server.lock().sessions[i as usize];
-                let recv = session.recv.clone();
-                if let Some(b) = recv.pop_sync() {
+        trace!("XON");
+
+        'read: loop {
+            // Outgoing commands jump the queue
+            'command: loop {
+                if let Some(b) = self.outgoing_command_queue_bytes.pop() {
+                    trace!("Sending command byte: {b:02X}");
+                    return Ok(b);
+                }
+                loop {
+                    if let Some(op) = self.outgoing_command_queue.pop_sync() {
+                        let mut buf = [0; MAX_COMMAND_LEN];
+                        match op.serialize(&mut buf) {
+                            Ok(buf) => {
+                                // Successfully serialized the command, so we can
+                                // send it to the peer.
+                                debug_assert!(self.outgoing_command_queue_bytes.is_empty());
+                                trace!(
+                                    "Sending command: {op:?} as {:?}",
+                                    String::from_utf8_lossy(buf)
+                                );
+                                self.outgoing_command_queue_bytes.replace_with_slice(buf);
+                                continue 'command;
+                            }
+                            Err(e) => {
+                                // This should never happen - log and try again.
+                                // TODO: It might be better if we just closed this
+                                // session instead.
+                                error!("Unexpected error serializing internal command: {e:?}");
+                            }
+                        }
+                    } else {
+                        break 'command;
+                    }
+                }
+            }
+
+            // There are no outgoing commands, so check for data. This is
+            // curently not a fully-optimal or fair algorithm.
+            trace!("Checking sessions");
+
+            // First, check the active session. We'll read up to
+            // FAIRNESS_CHUNK_SIZE bytes from the active session before giving
+            // another session a chance.
+            if self.fairness_counter > 0 {
+                if let Some(active) = self.active_session_to_peer {
+                    let recv = self.server.recv(active);
+                    self.fairness_counter = self.fairness_counter.saturating_sub(1);
+                    if let Some(b) = recv.pop_sync() {
+                        return Ok(b);
+                    }
+                }
+            }
+
+            // If the action session is idle, we'll check the other sessions. To
+            // be fair here we should keep some sort of LRU list.
+            for i in 0..self.server.max_session() {
+                if let Some(b) = self.server.recv(i).pop_sync() {
+                    self.fairness_counter = FAIRNESS_CHUNK_SIZE;
+                    if self.active_session_to_peer != Some(i) {
+                        trace!("Activating session {i}");
+                        self.active_session_to_peer = Some(i);
+                        let mut buf = [0; MAX_COMMAND_LEN];
+                        debug_assert!(self.outgoing_command_queue.is_empty());
+                        debug_assert!(self.outgoing_command_queue_bytes.is_empty());
+                        self.outgoing_command_queue_bytes
+                            .replace_with_slice(SSUOp::<0>::Select(i).serialize(&mut buf).unwrap());
+                        // We already have this byte, so send it as part of the command queue
+                        self.outgoing_command_queue_bytes.push(b);
+                        continue 'read;
+                    }
                     trace!("Sending session {i} byte: {b:02X}");
                     return Ok(b);
                 }
             }
 
-            let stuck = self.server.lock().stuck.clone();
-            stuck.wait().await;
+            trace!("Stuck");
+            self.server.await_stuck().await;
         }
     }
 }
 
 pub struct ServerWrite {
-    incoming_command_queue: SyncRingBuffer<PEER_COMMAND_QUEUE_SIZE>,
+    incoming_command_queue: SyncRingBuffer<MAX_COMMAND_LEN, u8>,
+    outgoing_command_queue: RingBufferHandle<PEER_COMMAND_QUEUE_SIZE, SSUOp<0>>,
     server: ServerHandle,
 }
 
 impl ServerWrite {
     /// Writes a byte from the peer. If the internal buffers for the sessions
     /// are full, will be in the pending state.
-    pub async fn write(&mut self, b: u8) -> Result<(), ServerError> {
+    pub async fn write(&mut self, mut b: u8) -> Result<(), ServerError> {
         trace!("Writing byte {b:02X}");
         match b {
             0x11 => {
+                trace!("Setting XON");
                 self.server.set_xon(true);
             }
             0x13 => {
+                trace!("Setting XOFF");
                 self.server.set_xon(false);
             }
             0x3 | 0x4 => {
@@ -666,39 +507,189 @@ impl ServerWrite {
                 std::process::exit(1);
             }
             INTRO => {
+                // Always reset the command queue on INTRO
+                trace!("Got INTRO");
+                self.incoming_command_queue.clear();
                 self.incoming_command_queue.push(INTRO);
             }
             TERM => {
-                let server = self.server.lock();
+                trace!("Got TERM");
                 if !self.incoming_command_queue.is_empty() {
+                    self.incoming_command_queue.push(TERM);
                     // If the command queue is full, we overflowed
                     if !self.incoming_command_queue.is_full() {
-                        // todo
+                        let mut op = [0; MAX_COMMAND_LEN];
+                        let op_buf = self.incoming_command_queue.copy_into_slice(&mut op);
+                        let op = SSUOp::<MAX_LABEL_LEN>::parse(&op_buf);
+                        trace!(
+                            "Parsed command: {:?} from {:?}",
+                            op,
+                            String::from_utf8_lossy(op_buf)
+                        );
+                        if let Ok(op) = op {
+                            self.process_op(op).await;
+                        }
                     }
                     self.incoming_command_queue.clear();
                 }
                 // The command might have unstuck us, so let's try to wake up
                 // the peer reader.
-                server.stuck.maybe_wake();
+                self.server.lock().stuck.maybe_wake();
             }
             _ => {
+                // Control chars may be encoded as Ctrl+T + letter
+                if self.incoming_command_queue.len() == 1 && (b'A'..=b'Z').contains(&b) {
+                    self.incoming_command_queue.clear();
+                    b = b.saturating_sub(b'@');
+                }
+
                 if !self.incoming_command_queue.is_empty() {
                     self.incoming_command_queue.push(b);
+                    trace!(
+                        "Pushing byte {b:02X} to command queue (len = {})",
+                        self.incoming_command_queue.len()
+                    );
                 } else {
-                    let active_session = self.server.lock().active_session;
-                    if let Some(active) = active_session {
-                        let recv = {
-                            let session = &self.server.lock().sessions[active as usize];
-                            session.recv.clone()
-                        };
-                        recv.push(b).await;
+                    if let Some(active) = self.server.active_session_recv() {
+                        trace!("Pushing byte {b:02X} to active session");
+                        active.push(b).await;
+                        self.server.lock().stuck.maybe_wake();
                     } else {
                         // These bytes are unallocated and go to the bit bucket
+                        trace!("Discarding byte {b:02X}");
                     }
                 }
             }
         }
         Ok(())
+    }
+
+    async fn process_op(&mut self, op: SSUOp<MAX_LABEL_LEN>) {
+        match op {
+            SSUOp::Probe(state, protocol_variant, max_sessions) => {
+                let max_sessions = max_sessions.max(self.server.max_session());
+                self.outgoing_command_queue
+                    .push(SSUOp::Probe(
+                        SSUState::EnabledWithSessions,
+                        protocol_variant,
+                        max_sessions,
+                    ))
+                    .await;
+            }
+            SSUOp::Select(session_id) => {
+                self.server.lock().active_session_from_peer = Some(session_id);
+                self.outgoing_command_queue
+                    .push(SSUOp::Report {
+                        op: SSUOpcode::Select,
+                        session_id: Some(session_id),
+                        code: 0,
+                    })
+                    .await;
+                self.outgoing_command_queue
+                    .push(SSUOp::AddCR {
+                        session_id,
+                        credits: RECV_CREDITS_TOP_UP,
+                    })
+                    .await;
+            }
+            SSUOp::AddCR {
+                session_id,
+                credits,
+            } => {
+                // todo
+            }
+            SSUOp::Open { session_id, label } => {
+                info!("Opening session {label:?}",);
+                self.outgoing_command_queue
+                    .push(SSUOp::Report {
+                        op: SSUOpcode::Open,
+                        session_id: Some(session_id),
+                        code: 0,
+                    })
+                    .await;
+            }
+            SSUOp::Verify(session_id) => {
+                self.outgoing_command_queue
+                    .push(SSUOp::Report {
+                        op: SSUOpcode::Verify,
+                        session_id: None,
+                        code: 0,
+                    })
+                    .await;
+                self.outgoing_command_queue
+                    .push(SSUOp::AddCR {
+                        session_id,
+                        credits: RECV_CREDITS_TOP_UP,
+                    })
+                    .await;
+            }
+            SSUOp::RequestRestore => {
+                self.outgoing_command_queue
+                    .push(SSUOp::Report {
+                        op: SSUOpcode::RequestRestore,
+                        session_id: None,
+                        code: 0,
+                    })
+                    .await;
+                self.outgoing_command_queue.push(SSUOp::Restore).await;
+            }
+            SSUOp::Report {
+                op: SSUOpcode::Probe,
+                session_id: None,
+                code,
+            } => {
+                // TODO: We can use this to detect a dead peer
+            }
+            SSUOp::Report {
+                op: SSUOpcode::Restore,
+                session_id: None,
+                code,
+            } => {
+                self.outgoing_command_queue
+                    .push(SSUOp::Open {
+                        session_id: 0,
+                        label: SSUString::External(&[]),
+                    })
+                    .await;
+            }
+            SSUOp::Report {
+                op: SSUOpcode::Open,
+                session_id: Some(session_id),
+                code,
+            } => {
+                self.outgoing_command_queue
+                    .push(SSUOp::AddCR {
+                        session_id,
+                        credits: RECV_CREDITS_TOP_UP,
+                    })
+                    .await;
+                if session_id == self.server.max_session() - 1 {
+                    self.outgoing_command_queue.push(SSUOp::RestoreEnd).await;
+                } else {
+                    self.outgoing_command_queue
+                        .push(SSUOp::Open {
+                            session_id: session_id + 1,
+                            label: SSUString::default(),
+                        })
+                        .await;
+                }
+            }
+            SSUOp::Report {
+                op: SSUOpcode::RestoreEnd,
+                session_id: None,
+                code,
+            } => {}
+            SSUOp::Report {
+                op: SSUOpcode::Select,
+                session_id: Some(_session_id),
+                code,
+            } => {
+                // TODO: We can use this to detect a dead peer
+            }
+            _ => {
+                warn!("Ignored unhandled or invalid command: {:?}", op);
+            }
+        }
     }
 }
 

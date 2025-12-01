@@ -77,3 +77,4 @@ name = "disassemble-rom"
 
 [[example]]
 name = "run-wasm"
+required-features = ["run-wasm"]

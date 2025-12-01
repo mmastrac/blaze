@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{self},
+    io::{self, Write},
 };
 
 use raw_tty::{GuardMode, IntoRawMode};
@@ -33,8 +33,6 @@ pub async fn main() {
 
     trace!("Entering stdin");
     let stdin = io::stdin().into_raw_mode().unwrap();
-    trace!("Entering stdout");
-    let stdout = io::stdout().guard_mode().unwrap();
     trace!("Entering sessions");
 
     let sessions: Vec<Box<dyn SessionEndpoint + Send + 'static>> = args
@@ -47,5 +45,4 @@ pub async fn main() {
     run_async().await;
 
     drop(stdin);
-    drop(stdout);
 }
