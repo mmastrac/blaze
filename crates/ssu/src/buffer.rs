@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    task::{Context, Poll},
+};
 
 use crate::server::WakerHandle;
 
@@ -223,6 +226,14 @@ impl<const SIZE: usize, T: Copy + Default> RingBuffer<SIZE, T> {
         self.buffer[self.write_index] = b;
         self.write_index = (self.write_index + 1) % SIZE;
     }
+
+    pub fn free(&self) -> usize {
+        SIZE - self.len()
+    }
+
+    pub fn register(&self, cx: &mut Context<'_>) {
+        self.read_waker.register(cx)
+    }
 }
 
 #[derive(Clone, Default)]
@@ -263,5 +274,95 @@ impl<const SIZE: usize, T: Copy + Default> RingBufferHandle<SIZE, T> {
     pub fn push_sync(&self, b: T) {
         let mut lock = self.buffer.lock().unwrap();
         lock.push_sync(b);
+    }
+
+    pub fn free(&self) -> usize {
+        let lock = self.buffer.lock().unwrap();
+        lock.free()
+    }
+
+    pub fn register(&self, cx: &mut Context<'_>) {
+        let lock = self.buffer.lock().unwrap();
+        lock.register(cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_ring_buffer_one() {
+        let buffer = RingBufferHandle::<16, u8>::new();
+
+        let a = {
+            let buffer = buffer.clone();
+            tokio::spawn(async move {
+                _ = buffer.pop().await;
+            })
+        };
+
+        let b = tokio::spawn(async move {
+            buffer.push(1).await;
+        });
+
+        a.await.unwrap();
+        b.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_ring_buffer_faster_reader() {
+        let buffer = RingBufferHandle::<16, u8>::new();
+
+        let a = {
+            let buffer = buffer.clone();
+            tokio::spawn(async move {
+                for _ in 0..32 {
+                    _ = buffer.pop().await;
+                    tokio::time::sleep(Duration::from_millis(2)).await;
+                }
+            })
+        };
+
+        let b = tokio::spawn(async move {
+            for _ in 0..4 {
+                buffer.push(1).await;
+            }
+
+            for _ in 0..28 {
+                buffer.push(1).await;
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        });
+
+        a.await.unwrap();
+        b.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_ring_buffer_faster_writer() {
+        let buffer = RingBufferHandle::<16, u8>::new();
+
+        let a = {
+            let buffer = buffer.clone();
+            tokio::spawn(async move {
+                for _ in 0..32 {
+                    _ = buffer.pop().await;
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+        };
+
+        let b = tokio::spawn(async move {
+            for _ in 0..32 {
+                buffer.push(1).await;
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        });
+
+        a.await.unwrap();
+        b.await.unwrap();
     }
 }

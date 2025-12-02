@@ -1,16 +1,15 @@
 use std::array;
 use std::future::{Future, poll_fn};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::task::{Poll, Waker};
+use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
 use tracing::{error, info, trace, warn};
 
 use crate::buffer::{RingBufferHandle, SyncRingBuffer};
 use crate::ops::{
-    INTRO, MAX_COMMAND_LEN, MAX_LABEL_LEN, OP_OPEN, OP_REQUEST_RESTORE, OP_RESTORE, OP_RESTORE_END,
-    OP_SELECT, OP_VERIFY, SSUOp, SSUOpcode, SSUState, SSUString, TERM,
+    INTRO, MAX_COMMAND_LEN, MAX_LABEL_LEN, SSUOp, SSUOpcode, SSUState, SSUString, TERM,
 };
 
 /// The maximum number of bytes to send in a single chunk before
@@ -39,14 +38,9 @@ const MAX_SESSION_COUNT: usize = 4;
 /// Data is both pushed and pulled externally for the peer and individual
 /// sessions, while this server manages the credits and routing for data.
 pub struct Server {
-    active_session_from_peer: Option<u8>,
     /// The command queue for the peer.
     xon: Xon,
-    sessions: [Session; MAX_SESSION_COUNT],
     max_sessions: u8,
-    /// If we get stuck without credits for any session, we may need to defer
-    /// processing until we get some room.
-    stuck: Arc<WakerHandle>,
 }
 
 impl Server {
@@ -56,10 +50,7 @@ impl Server {
         outgoing_command_queue.push_sync(SSUOp::Probe(SSUState::Disabled, 1, max_sessions));
 
         let server = Server {
-            sessions: Default::default(),
             xon: Xon::new(),
-            active_session_from_peer: Default::default(),
-            stuck: Default::default(),
             max_sessions,
         };
 
@@ -67,39 +58,48 @@ impl Server {
             server: Arc::new(Mutex::new(server)),
         };
 
+        let credits = array::from_fn(|_| Arc::new(Credits::new()));
+
         let server_read = {
             let server = server.clone();
-            let lock = server.lock();
-            drop(lock);
             ServerRead {
                 active_session_to_peer: None,
                 outgoing_command_queue: outgoing_command_queue.clone(),
                 outgoing_command_queue_bytes: Default::default(),
                 server,
                 fairness_counter: 0,
+                sessions: array::from_fn(|_| RingBufferHandle::default()),
+                credits: credits.clone(),
             }
         };
 
-        let sessions = array::from_fn(|_| {
+        let server_write = ServerWrite {
+            active_session_from_peer: None,
+            server: server.clone(),
+            incoming_command_queue: Default::default(),
+            outgoing_command_queue,
+            sessions: array::from_fn(|_| RingBufferHandle::default()),
+            credits,
+        };
+
+        let sessions = array::from_fn(|i| {
             (
                 SessionRead {
-                    buffer: Default::default(),
-                    server: server.clone(),
+                    buffer: server_write.sessions[i].clone(),
                 },
                 SessionWrite {
-                    buffer: Default::default(),
+                    buffer: server_read.sessions[i].clone(),
                 },
             )
         });
 
         ServerHandles {
             server_read,
-            server_write: ServerWrite {
-                server: server.clone(),
-                incoming_command_queue: Default::default(),
-                outgoing_command_queue,
+            server_write,
+            session_handles: SessionHandles {
+                sessions,
+                count: max_sessions as _,
             },
-            session_handles: SessionHandles { sessions, count: 0 },
         }
     }
 }
@@ -153,52 +153,13 @@ impl ServerHandle {
         }
     }
 
-    pub fn active_session_recv(&self) -> Option<RingBufferHandle<PEER_TO_SESSION_SIZE, u8>> {
-        let server = self.lock();
-        if let Some(active) = server.active_session_from_peer {
-            Some(server.sessions[active as usize].recv.clone())
-        } else {
-            None
-        }
-    }
-
-    pub fn try_recv(&self, session_id: u8) -> RecvResult {
-        let mut server = self.lock();
-        let session = &mut server.sessions[session_id as usize];
-        if session.recv.is_empty() {
-            return RecvResult::NoData;
-        }
-        if !session.credits.try_take_one().is_ok() {
-            trace!("No credits remaining for session {session_id}");
-            return RecvResult::NoCredits;
-        }
-        trace!("Credits remaining: {}", session.credits.count);
-        match session.recv.pop_sync() {
-            Some(b) => RecvResult::Data(b),
-            None => RecvResult::NoData,
-        }
-    }
-
     fn lock(&self) -> MutexGuard<Server> {
         self.server.lock().unwrap()
-    }
-
-    async fn await_stuck(&self) {
-        let stuck = self.lock().stuck.clone();
-        stuck.wait().await;
     }
 
     fn max_session(&self) -> u8 {
         self.lock().max_sessions
     }
-}
-
-#[derive(Default)]
-pub struct Session {
-    send: RingBufferHandle<SESSION_TO_PEER_SIZE, u8>,
-    recv: RingBufferHandle<PEER_TO_SESSION_SIZE, u8>,
-    credits: Credits,
-    peer_credits: usize,
 }
 
 #[cfg(feature = "server")]
@@ -242,15 +203,17 @@ pub async fn run_async() {
 
     for (mut read, mut write) in server.session_handles.into_iter() {
         tokio::task::spawn(async move {
+            trace!("Session task started");
             loop {
                 let Ok(b) = read.read().await else {
-                    return;
+                    break;
                 };
                 trace!("Got byte {b:02X} from session, looping back");
                 let Ok(()) = write.write(b).await else {
-                    return;
+                    break;
                 };
             }
+            trace!("Session task exited");
         });
     }
 
@@ -287,63 +250,64 @@ impl WakerHandle {
         })
     }
 
+    pub fn register(&self, cx: &mut Context<'_>) {
+        self.waker.lock().unwrap().replace(cx.waker().clone());
+    }
+
     pub fn maybe_wake(&self) {
         if let Some(waker) = self.waker.lock().unwrap().take() {
             waker.wake();
         }
     }
+}
 
-    pub fn must_wake(&self) {
-        assert!(self.waker.lock().unwrap().is_some());
-        self.maybe_wake();
-    }
+#[derive(Clone, Copy)]
+enum CreditsSlot {
+    SessionToPeer,
+    PeerToSession,
 }
 
 #[derive(Default)]
 struct Credits {
-    count: usize,
-    waker: WakerHandle,
+    session_to_peer: AtomicI32,
+    peer_to_session: AtomicI32,
 }
 
 impl Credits {
     pub fn new() -> Self {
         Self {
-            count: 0,
-            waker: WakerHandle::new(),
+            session_to_peer: AtomicI32::new(0),
+            peer_to_session: AtomicI32::new(0),
         }
     }
 
-    pub fn add(&mut self, count: usize) {
-        self.count = self.count.saturating_add(count);
-        self.waker.maybe_wake();
-    }
-
-    pub fn zero(&mut self) {
-        self.count = 0;
-    }
-
-    pub fn try_take_one(&mut self) -> Result<(), ()> {
-        if self.count == 0 {
-            return Err(());
-        }
-        self.count = self.count.saturating_sub(1);
-        Ok(())
-    }
-
-    pub async fn take_one(&mut self) {
-        loop {
-            if self.count == 0 {
-                self.waker.wait().await;
-                continue;
-            }
-
-            self.count = self.count.saturating_sub(1);
-            return;
+    fn slot(&self, slot: CreditsSlot) -> &AtomicI32 {
+        match slot {
+            CreditsSlot::SessionToPeer => &self.session_to_peer,
+            CreditsSlot::PeerToSession => &self.peer_to_session,
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.count == 0
+    pub fn add(&self, slot: CreditsSlot, count: usize) {
+        self.slot(slot).fetch_add(count as _, Ordering::AcqRel);
+    }
+
+    pub fn zero(&self, slot: CreditsSlot) {
+        self.slot(slot).store(0, Ordering::Release);
+    }
+
+    pub fn get(&self, slot: CreditsSlot) -> usize {
+        self.slot(slot).load(Ordering::Acquire).max(0) as usize
+    }
+
+    pub fn try_take_one(&self, slot: CreditsSlot) -> Result<usize, ()> {
+        let res = self.slot(slot).fetch_sub(1, Ordering::AcqRel);
+        if res < 0 {
+            self.slot(slot).fetch_add(1, Ordering::AcqRel);
+            Err(())
+        } else {
+            Ok(res as usize)
+        }
     }
 }
 
@@ -366,21 +330,14 @@ impl Xon {
             self.waker.maybe_wake();
         }
     }
-
-    pub async fn check(&self) {
-        if !self.xon {
-            self.waker.wait().await;
-        }
-    }
 }
 
 pub struct SessionRead {
     buffer: RingBufferHandle<PEER_TO_SESSION_SIZE, u8>,
-    server: ServerHandle,
 }
 
 impl SessionRead {
-    /// Reads a byte from the peer to send to the session.
+    /// Reads a byte queued from the peer to send to the session.
     pub async fn read(&mut self) -> Result<u8, SessionError> {
         Ok(self.buffer.pop().await)
     }
@@ -407,6 +364,9 @@ pub enum SessionError {
 
 pub struct ServerRead {
     active_session_to_peer: Option<u8>,
+    sessions: [RingBufferHandle<SESSION_TO_PEER_SIZE, u8>; MAX_SESSION_COUNT],
+    credits: [Arc<Credits>; MAX_SESSION_COUNT],
+
     outgoing_command_queue: RingBufferHandle<PEER_COMMAND_QUEUE_SIZE, SSUOp<0>>,
     outgoing_command_queue_bytes: SyncRingBuffer<MAX_COMMAND_LEN, u8>,
     fairness_counter: usize,
@@ -476,7 +436,7 @@ impl ServerRead {
             if self.fairness_counter > 0 {
                 if let Some(active) = self.active_session_to_peer {
                     self.fairness_counter = self.fairness_counter.saturating_sub(1);
-                    match self.server.try_recv(active) {
+                    match self.try_recv(active) {
                         RecvResult::Data(b) => return Ok(b),
                         RecvResult::NoData => {}
                         RecvResult::NoCredits => {
@@ -496,7 +456,7 @@ impl ServerRead {
             // If the action session is idle, we'll check the other sessions. To
             // be fair here we should keep some sort of LRU list.
             for i in 0..self.server.max_session() {
-                match self.server.try_recv(i) {
+                match self.try_recv(i) {
                     RecvResult::Data(b) => {
                         self.fairness_counter = FAIRNESS_CHUNK_SIZE;
                         if self.active_session_to_peer != Some(i) {
@@ -528,13 +488,52 @@ impl ServerRead {
                 }
             }
 
-            trace!("Stuck");
-            self.server.await_stuck().await;
+            trace!("IDLE: Waiting for commands, or any session to yield data");
+            poll_fn(|cx| {
+                // Check the command queue first
+                if !self.outgoing_command_queue.is_empty() {
+                    return Poll::Ready(());
+                }
+                self.outgoing_command_queue.register(cx);
+
+                // Poll each session in turn
+                for session in &self.sessions {
+                    if !session.is_empty() {
+                        return Poll::Ready(());
+                    }
+                    session.register(cx);
+                }
+
+                Poll::Pending
+            })
+            .await;
+        }
+    }
+
+    fn try_recv(&mut self, session_id: u8) -> RecvResult {
+        let session = &mut self.sessions[session_id as usize];
+        if session.is_empty() {
+            return RecvResult::NoData;
+        }
+        let Ok(credits) =
+            self.credits[session_id as usize].try_take_one(CreditsSlot::SessionToPeer)
+        else {
+            trace!("No credits remaining for session {session_id}");
+            return RecvResult::NoCredits;
+        };
+        trace!("Credits remaining: {credits}");
+        match session.pop_sync() {
+            Some(b) => RecvResult::Data(b),
+            None => RecvResult::NoData,
         }
     }
 }
 
 pub struct ServerWrite {
+    sessions: [RingBufferHandle<PEER_TO_SESSION_SIZE, u8>; MAX_SESSION_COUNT],
+    credits: [Arc<Credits>; MAX_SESSION_COUNT],
+    active_session_from_peer: Option<u8>,
+
     incoming_command_queue: SyncRingBuffer<MAX_COMMAND_LEN, u8>,
     outgoing_command_queue: RingBufferHandle<PEER_COMMAND_QUEUE_SIZE, SSUOp<0>>,
     server: ServerHandle,
@@ -558,28 +557,6 @@ impl ServerWrite {
                 // todo: ctrl+c or ctrl+d exits the server for now
                 std::process::exit(1);
             }
-            0x4 => {
-                let active = self.server.lock().active_session_from_peer.unwrap();
-                self.outgoing_command_queue
-                    .push(SSUOp::Verify(active))
-                    .await;
-                self.server.lock().stuck.maybe_wake();
-            }
-            0x5 => {
-                let active = self.server.lock().active_session_from_peer.unwrap();
-                self.outgoing_command_queue.push(SSUOp::Reset(active)).await;
-                self.server.lock().stuck.maybe_wake();
-            }
-            0x6 => {
-                let active = self.server.lock().active_session_from_peer.unwrap();
-                self.outgoing_command_queue
-                    .push(SSUOp::Close(active, false))
-                    .await;
-                self.server.lock().stuck.maybe_wake();
-                let active = self.server.lock().active_session_from_peer.unwrap();
-                self.outgoing_command_queue.push(SSUOp::Query(active)).await;
-                self.server.lock().stuck.maybe_wake();
-            }
             INTRO => {
                 // Always reset the command queue on INTRO
                 trace!("Got INTRO");
@@ -596,8 +573,7 @@ impl ServerWrite {
                         let op_buf = self.incoming_command_queue.copy_into_slice(&mut op);
                         let op = SSUOp::<MAX_LABEL_LEN>::parse(&op_buf);
                         trace!(
-                            "Parsed command: {:?} from {:?}",
-                            op,
+                            "Parsed command: {op:?} from {:?}",
                             String::from_utf8_lossy(op_buf)
                         );
                         if let Ok(op) = op {
@@ -606,9 +582,6 @@ impl ServerWrite {
                     }
                     self.incoming_command_queue.clear();
                 }
-                // The command might have unstuck us, so let's try to wake up
-                // the peer reader.
-                self.server.lock().stuck.maybe_wake();
             }
             _ => {
                 // Control chars may be encoded as Ctrl+T + letter
@@ -624,10 +597,18 @@ impl ServerWrite {
                         self.incoming_command_queue.len()
                     );
                 } else {
-                    if let Some(active) = self.server.active_session_recv() {
+                    if let Some(session_id) = self.active_session_from_peer {
                         trace!("Pushing byte {b:02X} to active session");
-                        active.push(b).await;
-                        self.server.lock().stuck.maybe_wake();
+                        self.sessions[session_id as usize].push(b).await;
+                        if let Some(credits) = self.session_needs_credits(session_id) {
+                            trace!("Adding {credits} credits to session {session_id}");
+                            self.outgoing_command_queue
+                                .push(SSUOp::AddCredits {
+                                    session_id,
+                                    credits,
+                                })
+                                .await;
+                        }
                     } else {
                         // These bytes are unallocated and go to the bit bucket
                         trace!("Discarding byte {b:02X}");
@@ -660,7 +641,7 @@ impl ServerWrite {
                     .await;
             }
             SSUOp::Select(session_id) => {
-                self.server.lock().active_session_from_peer = Some(session_id);
+                self.active_session_from_peer = Some(session_id);
                 self.outgoing_command_queue
                     .push(SSUOp::Report {
                         op: SSUOpcode::Select,
@@ -668,25 +649,25 @@ impl ServerWrite {
                         code: 0,
                     })
                     .await;
-                self.outgoing_command_queue
-                    .push(SSUOp::AddCredits {
-                        session_id,
-                        credits: RECV_CREDITS_TOP_UP,
-                    })
-                    .await;
+                // Pre-emptively add credits to the session if needed
+                if let Some(credits) = self.session_needs_credits(session_id) {
+                    trace!("Adding {credits} credits to session {session_id}");
+                    self.outgoing_command_queue
+                        .push(SSUOp::AddCredits {
+                            session_id,
+                            credits,
+                        })
+                        .await;
+                }
             }
             SSUOp::AddCredits {
                 session_id,
                 credits,
             } => {
-                self.server.lock().sessions[session_id as usize]
-                    .credits
-                    .add(credits);
+                self.credits[session_id as usize].add(CreditsSlot::SessionToPeer, credits);
             }
             SSUOp::Zero(session_id) => {
-                self.server.lock().sessions[session_id as usize]
-                    .credits
-                    .zero();
+                self.credits[session_id as usize].zero(CreditsSlot::SessionToPeer);
                 self.outgoing_command_queue
                     .push(SSUOp::Report {
                         op: SSUOpcode::Zero,
@@ -713,10 +694,22 @@ impl ServerWrite {
                         code: 0,
                     })
                     .await;
+
+                // Restore the current peer credits to the session
+                self.credits[session_id as usize].zero(CreditsSlot::PeerToSession);
+                self.outgoing_command_queue
+                    .push(SSUOp::Zero(session_id))
+                    .await;
+
+                // Top up the peer's credits to the session
+                let remaining = self.sessions[session_id as usize].free();
+                let credits = remaining.min(RECV_CREDITS_TOP_UP);
+                self.credits[session_id as usize].add(CreditsSlot::PeerToSession, credits);
+
                 self.outgoing_command_queue
                     .push(SSUOp::AddCredits {
                         session_id,
-                        credits: RECV_CREDITS_TOP_UP,
+                        credits,
                     })
                     .await;
             }
@@ -754,10 +747,15 @@ impl ServerWrite {
                 session_id: Some(session_id),
                 code,
             } => {
+                // Set the credits to the low water mark so there's something.
+                // When the peer starts sending data, we'll top them up.
+                let credits = RECV_CREDITS_LOW_WATER_MARK;
+                self.credits[session_id as usize].zero(CreditsSlot::PeerToSession);
+                self.credits[session_id as usize].add(CreditsSlot::PeerToSession, credits);
                 self.outgoing_command_queue
                     .push(SSUOp::AddCredits {
                         session_id,
-                        credits: RECV_CREDITS_TOP_UP,
+                        credits,
                     })
                     .await;
                 if session_id == self.server.max_session() - 1 {
@@ -816,6 +814,17 @@ impl ServerWrite {
             _ => {
                 warn!("Ignored unhandled or invalid command: {:?}", op);
             }
+        }
+    }
+
+    /// Once the peer's credits drops below the low water mark, we need to top them up
+    /// with a constant amount.
+    fn session_needs_credits(&self, session_id: u8) -> Option<usize> {
+        let credits = self.credits[session_id as usize].get(CreditsSlot::PeerToSession);
+        if credits < RECV_CREDITS_LOW_WATER_MARK {
+            Some(RECV_CREDITS_TOP_UP)
+        } else {
+            None
         }
     }
 }
