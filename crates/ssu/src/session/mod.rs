@@ -50,6 +50,8 @@ pub enum SessionConfig {
         rows: NonZeroU16,
         cols: NonZeroU16,
     },
+    /// Connect to a serial port
+    #[cfg(feature = "serial")]
     Serial {
         path: PathBuf,
         baud_rate: NonZeroU32,
@@ -158,6 +160,8 @@ enum SessionSubcommand {
         #[arg(long, default_value_t = NonZeroU16::new(80).unwrap(), conflicts_with = "no_pty")]
         cols: NonZeroU16,
     },
+    /// Connect to a serial port
+    #[cfg(feature = "serial")]
     Serial {
         path: PathBuf,
         #[arg(long, default_value_t = NonZeroU32::new(38400).unwrap())]

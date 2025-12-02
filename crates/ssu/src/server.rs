@@ -704,7 +704,7 @@ impl ServerWrite {
 
     async fn process_op(&mut self, op: SSUOp<MAX_LABEL_LEN>) {
         match op {
-            SSUOp::Probe(_state, protocol_variant, max_sessions) => {
+            SSUOp::Probe(SSUState::Disabled, protocol_variant, max_sessions) => {
                 self.server.lock().enabled = false;
                 self.incoming_command_queue.clear();
                 self.outgoing_command_queue.clear();
@@ -717,6 +717,38 @@ impl ServerWrite {
                 }
 
                 let max_sessions = max_sessions.max(self.server.max_session());
+                self.outgoing_command_queue
+                    .push(SSUOp::Probe(
+                        SSUState::EnabledWithSessions,
+                        protocol_variant,
+                        max_sessions,
+                    ))
+                    .await;
+            }
+            SSUOp::Probe(
+                SSUState::Enabled | SSUState::EnabledWithSessions,
+                protocol_variant,
+                max_sessions,
+            ) => {
+                self.server.lock().enabled = false;
+                self.incoming_command_queue.clear();
+                self.outgoing_command_queue.clear();
+                self.active_session_from_peer = None;
+                for session in &self.sessions {
+                    session.clear();
+                }
+                for credit in &self.credits {
+                    credit.zero_all();
+                }
+
+                let max_sessions = max_sessions.max(self.server.max_session());
+                self.outgoing_command_queue
+                    .push(SSUOp::Report {
+                        op: SSUOpcode::Probe,
+                        session_id: None,
+                        code: 0,
+                    })
+                    .await;
                 self.outgoing_command_queue
                     .push(SSUOp::Probe(
                         SSUState::EnabledWithSessions,
@@ -837,14 +869,14 @@ impl ServerWrite {
             SSUOp::Report {
                 op: SSUOpcode::Probe,
                 session_id: None,
-                code,
+                code: _,
             } => {
                 // TODO: We can use this to detect a dead peer
             }
             SSUOp::Report {
                 op: SSUOpcode::Restore,
                 session_id: None,
-                code,
+                code: _,
             } => {
                 self.outgoing_command_queue
                     .push(SSUOp::Open {
@@ -856,7 +888,7 @@ impl ServerWrite {
             SSUOp::Report {
                 op: SSUOpcode::Open,
                 session_id: Some(session_id),
-                code,
+                code: _,
             } => {
                 // Set the credits to the low water mark so there's something.
                 // When the peer starts sending data, we'll top them up.
@@ -882,44 +914,44 @@ impl ServerWrite {
             }
             SSUOp::Report {
                 op: SSUOpcode::Close,
-                session_id: Some(session_id),
-                code,
+                session_id: Some(_session_id),
+                code: _,
             } => {
                 // TODO: We can use this to detect a dead peer
             }
             SSUOp::Report {
                 op: SSUOpcode::RestoreEnd,
                 session_id: None,
-                code,
+                code: _,
             } => {
                 // TODO: We can use this to detect a dead peer
                 self.server.lock().enabled = true;
             }
             SSUOp::Report {
                 op: SSUOpcode::Verify,
-                session_id: Some(session_id),
-                code,
+                session_id: Some(_session_id),
+                code: _,
             } => {
                 // TODO: We can use this to detect a dead peer
             }
             SSUOp::Report {
                 op: SSUOpcode::Query,
-                session_id: Some(session_id),
-                code,
+                session_id: Some(_session_id),
+                code: _,
             } => {
                 // TODO: We can use this to detect a dead peer
             }
             SSUOp::Report {
                 op: SSUOpcode::Reset,
-                session_id: Some(session_id),
-                code,
+                session_id: Some(_session_id),
+                code: _,
             } => {
                 // TODO: We can use this to detect a dead peer
             }
             SSUOp::Report {
                 op: SSUOpcode::Select,
                 session_id: Some(_session_id),
-                code,
+                code: _,
             } => {
                 // TODO: We can use this to detect a dead peer
             }
