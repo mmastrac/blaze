@@ -42,7 +42,7 @@ pub async fn main() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
-    run_async().await;
+    run_async(sessions).await;
 
     drop(stdin);
 }

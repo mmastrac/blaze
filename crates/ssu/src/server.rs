@@ -11,25 +11,35 @@ use crate::buffer::{RingBufferHandle, SyncRingBuffer};
 use crate::ops::{
     INTRO, MAX_COMMAND_LEN, MAX_LABEL_LEN, SSUOp, SSUOpcode, SSUState, SSUString, TERM,
 };
+use crate::session::SessionEndpoint;
 
 /// The maximum number of bytes to send in a single chunk before
 /// trying to poll the other session.
 const FAIRNESS_CHUNK_SIZE: usize = 32;
 
+/// The minimum number of credits to keep to avoid starvation. When we detect
+/// the peer has reached this level, we top up the credit balance.
 const RECV_CREDITS_LOW_WATER_MARK: usize = 128;
-const RECV_CREDITS_TOP_UP: usize = 1024;
+/// The amount of credits to top up the credit balance when the peer has reached
+/// the low water mark. Note that this is smaller than the actual buffer.
+const RECV_CREDITS_TOP_UP: usize = PEER_TO_SESSION_SIZE - 1024;
 
-/// The maximum internal buffer size to receive from a session
-/// regardless of upstream credit count.
+/// The maximum internal buffer size to receive from a session regardless of
+/// upstream credit count. Note that the underlying session channel may have
+/// additional buffering.
+///
+/// This works out to be a little less than half a second of data at 30k baud.
 const SESSION_TO_PEER_SIZE: usize = 1024;
-/// The maximum internal buffer size to queue for a session. This affects
-/// the credit messages sent to the upstream peer and is effectively what
-/// we promise to buffer per session to the upstream peer.
+/// The maximum internal buffer size to queue for a session. This affects the
+/// credit messages sent to the upstream peer and is effectively what we promise
+/// to buffer per session to the upstream peer.
 const PEER_TO_SESSION_SIZE: usize = 16 * 1024;
 
 /// The maximum internal buffer size to queue for the peer's command queue.
 const PEER_COMMAND_QUEUE_SIZE: usize = 32;
 
+/// The maximum number of sessions to support. This matches the number of
+/// sessions supported by the DEC VT525.
 const MAX_SESSION_COUNT: usize = 4;
 
 /// SSU server state machine implementation. This speaks SSU to a peer and
@@ -41,6 +51,7 @@ pub struct Server {
     /// The command queue for the peer.
     xon: Xon,
     max_sessions: u8,
+    enabled: bool,
 }
 
 impl Server {
@@ -52,6 +63,7 @@ impl Server {
         let server = Server {
             xon: Xon::new(),
             max_sessions,
+            enabled: false,
         };
 
         let server = ServerHandle {
@@ -163,13 +175,14 @@ impl ServerHandle {
 }
 
 #[cfg(feature = "server")]
-pub async fn run_async() {
+pub async fn run_async(sessions: Vec<Box<dyn SessionEndpoint + Send + 'static>>) {
     use std::os::fd::AsFd;
-
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+    use crate::session::Ticked;
+
     trace!("Entering run_async");
-    let server = Server::new(2);
+    let server = Server::new(sessions.len() as u8);
     let mut server_read = server.server_read;
     let owned = std::io::stdout().as_fd().try_clone_to_owned().unwrap();
     let file = std::fs::File::from(owned);
@@ -201,19 +214,54 @@ pub async fn run_async() {
         }
     });
 
-    for (mut read, mut write) in server.session_handles.into_iter() {
+    for ((mut read, mut write), session) in server.session_handles.into_iter().zip(sessions) {
+        let (mut sread, mut swrite) = session.split();
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<u8>(1);
+        tokio::task::spawn_blocking(move || {
+            loop {
+                let b = rx.blocking_recv().unwrap();
+                swrite.send(b);
+            }
+        });
         tokio::task::spawn(async move {
             trace!("Session task started");
             loop {
                 let Ok(b) = read.read().await else {
                     break;
                 };
-                trace!("Got byte {b:02X} from session, looping back");
-                let Ok(()) = write.write(b).await else {
+                let Ok(_) = tx.send(b).await else {
                     break;
                 };
             }
             trace!("Session task exited");
+        });
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<u8>(1);
+        tokio::task::spawn_blocking(move || {
+            loop {
+                match sread.recv() {
+                    Ticked::Byte(b) => {
+                        let Ok(_) = tx.blocking_send(b) else {
+                            break;
+                        };
+                    }
+                    Ticked::IdleInput | Ticked::Idle => {
+                        std::thread::sleep(Duration::from_millis(10));
+                        break;
+                    }
+                }
+            }
+        });
+        tokio::task::spawn(async move {
+            loop {
+                let Some(b) = rx.recv().await else {
+                    break;
+                };
+                trace!("Got byte {b:02X} from session, writing to peer");
+                let Ok(_) = write.write(b).await else {
+                    break;
+                };
+            }
         });
     }
 
@@ -244,6 +292,8 @@ impl WakerHandle {
                 assert!(self.waker.lock().unwrap().is_none());
                 self.waker.lock().unwrap().replace(cx.waker().clone());
                 Poll::Pending
+            } else if self.waker.lock().unwrap().is_some() {
+                Poll::Pending
             } else {
                 Poll::Ready(())
             }
@@ -261,7 +311,7 @@ impl WakerHandle {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum CreditsSlot {
     SessionToPeer,
     PeerToSession,
@@ -271,6 +321,7 @@ enum CreditsSlot {
 struct Credits {
     session_to_peer: AtomicI32,
     peer_to_session: AtomicI32,
+    waker: WakerHandle,
 }
 
 impl Credits {
@@ -278,6 +329,7 @@ impl Credits {
         Self {
             session_to_peer: AtomicI32::new(0),
             peer_to_session: AtomicI32::new(0),
+            waker: WakerHandle::new(),
         }
     }
 
@@ -290,6 +342,9 @@ impl Credits {
 
     pub fn add(&self, slot: CreditsSlot, count: usize) {
         self.slot(slot).fetch_add(count as _, Ordering::AcqRel);
+        if slot == CreditsSlot::SessionToPeer {
+            self.waker.maybe_wake();
+        }
     }
 
     pub fn zero(&self, slot: CreditsSlot) {
@@ -300,9 +355,13 @@ impl Credits {
         self.slot(slot).load(Ordering::Acquire).max(0) as usize
     }
 
+    pub fn available(&self, slot: CreditsSlot) -> bool {
+        self.get(slot) > 0
+    }
+
     pub fn try_take_one(&self, slot: CreditsSlot) -> Result<usize, ()> {
         let res = self.slot(slot).fetch_sub(1, Ordering::AcqRel);
-        if res < 0 {
+        if res <= 0 {
             self.slot(slot).fetch_add(1, Ordering::AcqRel);
             Err(())
         } else {
@@ -363,6 +422,9 @@ pub enum SessionError {
 }
 
 pub struct ServerRead {
+    /// Track the active session we're sending data to on the peer side.
+    ///
+    /// NOTE: The peer and server may have different active sessions.
     active_session_to_peer: Option<u8>,
     sessions: [RingBufferHandle<SESSION_TO_PEER_SIZE, u8>; MAX_SESSION_COUNT],
     credits: [Arc<Credits>; MAX_SESSION_COUNT],
@@ -426,69 +488,74 @@ impl ServerRead {
                 }
             }
 
-            // There are no outgoing commands, so check for data. This is
-            // curently not a fully-optimal or fair algorithm.
-            trace!("Checking sessions");
+            if self.server.lock().enabled {
+                // There are no outgoing commands, so check for data. This is
+                // curently not a fully-optimal or fair algorithm.
+                trace!("Checking sessions");
 
-            // First, check the active session. We'll read up to
-            // FAIRNESS_CHUNK_SIZE bytes from the active session before giving
-            // another session a chance.
-            if self.fairness_counter > 0 {
-                if let Some(active) = self.active_session_to_peer {
-                    self.fairness_counter = self.fairness_counter.saturating_sub(1);
-                    match self.try_recv(active) {
-                        RecvResult::Data(b) => return Ok(b),
+                // First, check the active session. We'll read up to
+                // FAIRNESS_CHUNK_SIZE bytes from the active session before giving
+                // another session a chance.
+                if self.fairness_counter > 0 {
+                    if let Some(active) = self.active_session_to_peer {
+                        self.fairness_counter = self.fairness_counter.saturating_sub(1);
+                        match self.try_recv(active) {
+                            RecvResult::Data(b) => return Ok(b),
+                            RecvResult::NoData => {
+                                self.fairness_counter = 0;
+                            }
+                            RecvResult::NoCredits => {
+                                // We should not hit this case because the
+                                // remote end should have granted us more, but
+                                // it's possible we've lost data on the line
+                                // somewhere. We'll try to fix this up later.
+                                self.fairness_counter = 0;
+                            }
+                        }
+                    }
+                }
+
+                // If the action session is idle or out of credits, we'll check
+                // the other sessions. To be fair here we should keep some sort
+                // of LRU list.
+                for i in 0..self.server.max_session() {
+                    match self.try_recv(i) {
+                        RecvResult::Data(b) => {
+                            self.fairness_counter = FAIRNESS_CHUNK_SIZE;
+                            if self.active_session_to_peer != Some(i) {
+                                trace!("Activating session {i}");
+                                self.active_session_to_peer = Some(i);
+                                let mut buf = [0; MAX_COMMAND_LEN];
+                                debug_assert!(self.outgoing_command_queue.is_empty());
+                                debug_assert!(self.outgoing_command_queue_bytes.is_empty());
+                                self.outgoing_command_queue_bytes.replace_with_slice(
+                                    SSUOp::<0>::Select(i).serialize(&mut buf).unwrap(),
+                                );
+                                // We already have this byte, so send it as part of
+                                // the command queue. This is valid because the
+                                // command queue is just straight bytes.
+                                self.outgoing_command_queue_bytes.push(b);
+                                continue 'read;
+                            }
+                            trace!("Sending session {i} byte: {b:02X}");
+                            return Ok(b);
+                        }
                         RecvResult::NoData => {}
                         RecvResult::NoCredits => {
                             // We should not hit this case because the remote
                             // end should have granted us more, but it's
                             // possible we've lost data on the line somewhere.
                             let mut buf = [0; MAX_COMMAND_LEN];
-                            self.outgoing_command_queue_bytes.replace_with_slice(
-                                SSUOp::<0>::Verify(active).serialize(&mut buf).unwrap(),
-                            );
-                            continue 'read;
+                            // self.outgoing_command_queue_bytes
+                            //     .replace_with_slice(SSUOp::<0>::Verify(i).serialize(&mut buf).unwrap());
+                            continue; // 'read;
                         }
                     }
                 }
+
+                trace!("IDLE: Waiting for commands, or any session to yield data");
             }
 
-            // If the action session is idle, we'll check the other sessions. To
-            // be fair here we should keep some sort of LRU list.
-            for i in 0..self.server.max_session() {
-                match self.try_recv(i) {
-                    RecvResult::Data(b) => {
-                        self.fairness_counter = FAIRNESS_CHUNK_SIZE;
-                        if self.active_session_to_peer != Some(i) {
-                            trace!("Activating session {i}");
-                            self.active_session_to_peer = Some(i);
-                            let mut buf = [0; MAX_COMMAND_LEN];
-                            debug_assert!(self.outgoing_command_queue.is_empty());
-                            debug_assert!(self.outgoing_command_queue_bytes.is_empty());
-                            self.outgoing_command_queue_bytes.replace_with_slice(
-                                SSUOp::<0>::Select(i).serialize(&mut buf).unwrap(),
-                            );
-                            // We already have this byte, so send it as part of the command queue
-                            self.outgoing_command_queue_bytes.push(b);
-                            continue 'read;
-                        }
-                        trace!("Sending session {i} byte: {b:02X}");
-                        return Ok(b);
-                    }
-                    RecvResult::NoData => {}
-                    RecvResult::NoCredits => {
-                        // We should not hit this case because the remote
-                        // end should have granted us more, but it's
-                        // possible we've lost data on the line somewhere.
-                        let mut buf = [0; MAX_COMMAND_LEN];
-                        self.outgoing_command_queue_bytes
-                            .replace_with_slice(SSUOp::<0>::Verify(i).serialize(&mut buf).unwrap());
-                        continue 'read;
-                    }
-                }
-            }
-
-            trace!("IDLE: Waiting for commands, or any session to yield data");
             poll_fn(|cx| {
                 // Check the command queue first
                 if !self.outgoing_command_queue.is_empty() {
@@ -497,11 +564,18 @@ impl ServerRead {
                 self.outgoing_command_queue.register(cx);
 
                 // Poll each session in turn
-                for session in &self.sessions {
+                for (session, credits) in self.sessions.iter().zip(&self.credits) {
                     if !session.is_empty() {
-                        return Poll::Ready(());
+                        if credits.available(CreditsSlot::SessionToPeer) {
+                            return Poll::Ready(());
+                        } else {
+                            trace!("No credits available for session, registering waker");
+                            credits.waker.register(cx);
+                        }
+                    } else {
+                        trace!("Session is empty, registering waker");
+                        session.register(cx);
                     }
-                    session.register(cx);
                 }
 
                 Poll::Pending
@@ -530,9 +604,12 @@ impl ServerRead {
 }
 
 pub struct ServerWrite {
+    /// Track the active session we're receiving data from on the peer side.
+    ///
+    /// NOTE: The peer and server may have different active sessions.
+    active_session_from_peer: Option<u8>,
     sessions: [RingBufferHandle<PEER_TO_SESSION_SIZE, u8>; MAX_SESSION_COUNT],
     credits: [Arc<Credits>; MAX_SESSION_COUNT],
-    active_session_from_peer: Option<u8>,
 
     incoming_command_queue: SyncRingBuffer<MAX_COMMAND_LEN, u8>,
     outgoing_command_queue: RingBufferHandle<PEER_COMMAND_QUEUE_SIZE, SSUOp<0>>,
@@ -552,10 +629,6 @@ impl ServerWrite {
             0x13 => {
                 trace!("Setting XOFF");
                 self.server.set_xon(false);
-            }
-            0x3 => {
-                // todo: ctrl+c or ctrl+d exits the server for now
-                std::process::exit(1);
             }
             INTRO => {
                 // Always reset the command queue on INTRO
@@ -596,6 +669,10 @@ impl ServerWrite {
                         "Pushing byte {b:02X} to command queue (len = {})",
                         self.incoming_command_queue.len()
                     );
+                    if self.incoming_command_queue.is_full() {
+                        error!("Overlong command received, discarding");
+                        self.incoming_command_queue.clear();
+                    }
                 } else {
                     if let Some(session_id) = self.active_session_from_peer {
                         trace!("Pushing byte {b:02X} to active session");
@@ -622,6 +699,18 @@ impl ServerWrite {
     async fn process_op(&mut self, op: SSUOp<MAX_LABEL_LEN>) {
         match op {
             SSUOp::Probe(_state, protocol_variant, max_sessions) => {
+                self.server.lock().enabled = false;
+                self.incoming_command_queue.clear();
+                self.outgoing_command_queue.clear();
+                self.active_session_from_peer = None;
+                for session in &self.sessions {
+                    session.clear();
+                }
+                for credit in &self.credits {
+                    credit.zero(CreditsSlot::SessionToPeer);
+                    credit.zero(CreditsSlot::PeerToSession);
+                }
+
                 let max_sessions = max_sessions.max(self.server.max_session());
                 self.outgoing_command_queue
                     .push(SSUOp::Probe(
@@ -639,6 +728,7 @@ impl ServerWrite {
                         code: 0,
                     })
                     .await;
+                self.server.lock().enabled = false;
             }
             SSUOp::Select(session_id) => {
                 self.active_session_from_peer = Some(session_id);
@@ -690,7 +780,7 @@ impl ServerWrite {
                 self.outgoing_command_queue
                     .push(SSUOp::Report {
                         op: SSUOpcode::Verify,
-                        session_id: None,
+                        session_id: Some(session_id),
                         code: 0,
                     })
                     .await;
@@ -782,6 +872,7 @@ impl ServerWrite {
                 code,
             } => {
                 // TODO: We can use this to detect a dead peer
+                self.server.lock().enabled = true;
             }
             SSUOp::Report {
                 op: SSUOpcode::Verify,

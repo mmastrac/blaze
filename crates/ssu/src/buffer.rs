@@ -161,6 +161,12 @@ impl<const SIZE: usize, T: Copy + Default> RingBuffer<SIZE, T> {
         self.read_index == self.write_index
     }
 
+    pub fn clear(&mut self) {
+        self.read_index = self.write_index;
+        self.write_waker.maybe_wake();
+        self.read_waker.maybe_wake();
+    }
+
     pub fn len(&self) -> usize {
         if self.write_index >= self.read_index {
             self.write_index - self.read_index
@@ -216,6 +222,7 @@ impl<const SIZE: usize, T: Copy + Default> RingBuffer<SIZE, T> {
         }
         let b = self.buffer[self.read_index];
         self.read_index = (self.read_index + 1) % SIZE;
+        self.write_waker.maybe_wake();
         Some(b)
     }
 
@@ -225,6 +232,7 @@ impl<const SIZE: usize, T: Copy + Default> RingBuffer<SIZE, T> {
         }
         self.buffer[self.write_index] = b;
         self.write_index = (self.write_index + 1) % SIZE;
+        self.read_waker.maybe_wake();
     }
 
     pub fn free(&self) -> usize {
@@ -284,6 +292,11 @@ impl<const SIZE: usize, T: Copy + Default> RingBufferHandle<SIZE, T> {
     pub fn register(&self, cx: &mut Context<'_>) {
         let lock = self.buffer.lock().unwrap();
         lock.register(cx)
+    }
+
+    pub fn clear(&self) {
+        let mut lock = self.buffer.lock().unwrap();
+        lock.clear()
     }
 }
 
@@ -348,7 +361,7 @@ mod tests {
         let a = {
             let buffer = buffer.clone();
             tokio::spawn(async move {
-                for _ in 0..32 {
+                for _ in 0..128 {
                     _ = buffer.pop().await;
                     tokio::time::sleep(Duration::from_millis(10)).await;
                 }
@@ -356,7 +369,7 @@ mod tests {
         };
 
         let b = tokio::spawn(async move {
-            for _ in 0..32 {
+            for _ in 0..128 {
                 buffer.push(1).await;
                 tokio::time::sleep(Duration::from_millis(1)).await;
             }
