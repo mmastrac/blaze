@@ -37,6 +37,11 @@ The entire balance of credit does not need to be dispensed at once. The sender
 can dispense different levels of credits as it sees fit, for example to reflect
 different buffer watermarks.
 
+The entire SSU channel between peers may be controlled with XON/XOFF in cases
+where one side needs time to catch up on control message processing or otherwise
+needs to pause the total flow of data. This pauses ALL data processing for ALL
+sessions.
+
 ### Handshake
 
 The handshake can be initiated from either side and is as follows. Certain
@@ -213,17 +218,26 @@ When receiving a Reset message, respond with a Report acknowledging Reset:
 
 ### Add credits
 
+The `ADD_CREDITS` message is used to grant credits to a session. The sender may
+send multiple `ADD_CREDITS` messages to grant credits to a session at any time.
+
 Format: `+<w><x><y><z>` or `+<w><y><z>`
 
 Parameters:
 
+The `<z>` parameter is required and always indicated by having a value >= 0x40.
+
 - `<w>`: Session ID (`A` or `B`)
-- `<x>`: 5 bits of credit data
-- `<y>`: 5 bits of credit data
-- `<z>`: 5 bits of credit data (0x40 bit must be set here, 0x20 bit is moved to
-  high bit of credit)
+- `<x>`: 5 bits of credit data (0x20-0x3F)
+- `<y>`: 5 bits of credit data (0x20-0x3F)
+- `<z>`: 5 bits of credit data (0x40-0x7F, 0x20 bit is moved to
+  high bit of credit data)
 
 Credits = `{ z5, x4, x3, x2, x1, x0, y4, y3, y2, y1, y0, z4, z3, z2, z1, z0 }`
+
+Example:
+
+`+B"@` => decodes as 64 (`0 00000 00010 00000`) => y: `"` -> 0x2, z: `@` -> 0x0
 
 Expected Responses:
 
