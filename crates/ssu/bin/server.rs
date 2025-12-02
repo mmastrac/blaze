@@ -29,7 +29,6 @@ pub async fn main() {
     info!("Starting SSU server");
 
     let args = Args::parse();
-    let server = Server::new(args.session.len() as u8);
 
     trace!("Entering stdin");
     let stdin = io::stdin().into_raw_mode().unwrap();

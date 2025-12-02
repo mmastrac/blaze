@@ -1,9 +1,16 @@
-use std::{borrow::Cow, num::NonZeroU16, path::PathBuf, str::FromStr};
+use std::{
+    borrow::Cow,
+    num::{NonZeroU16, NonZeroU32},
+    path::PathBuf,
+    str::FromStr,
+};
 
-use clap::{CommandFactory, FromArgMatches, Parser};
+use clap::{CommandFactory, FromArgMatches};
 
 #[cfg(feature = "pty")]
 use crate::session::pty::PtySession;
+#[cfg(feature = "serial")]
+use crate::session::serial::SerialSession;
 use crate::session::{
     exec::ExecSession,
     io::{IoSessionReadWrite, boot_io},
@@ -17,6 +24,14 @@ pub mod loopback;
 pub mod pipe;
 #[cfg(feature = "pty")]
 pub mod pty;
+#[cfg(feature = "serial")]
+pub mod serial;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SerialFlowControl {
+    Hardware,
+    Software,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionConfig {
@@ -34,6 +49,13 @@ pub enum SessionConfig {
         cmd: String,
         rows: NonZeroU16,
         cols: NonZeroU16,
+    },
+    Serial {
+        path: PathBuf,
+        baud_rate: NonZeroU32,
+        data_bits: u8,
+        stop_bits: u8,
+        flow_control: Option<SerialFlowControl>,
     },
 }
 
@@ -58,6 +80,50 @@ impl SessionConfig {
             SessionConfig::Exec(cmd) => boot(ExecSession::new(cmd)),
             #[cfg(feature = "pty")]
             SessionConfig::ExecPty { cmd, rows, cols } => boot(PtySession::new(cmd, cols, rows)),
+            #[cfg(feature = "serial")]
+            SessionConfig::Serial {
+                path,
+                baud_rate,
+                data_bits,
+                stop_bits,
+                flow_control,
+            } => {
+                use serialport::{DataBits, FlowControl, StopBits};
+                let data_bits = match data_bits {
+                    5 => DataBits::Five,
+                    6 => DataBits::Six,
+                    7 => DataBits::Seven,
+                    8 => DataBits::Eight,
+                    _ => {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "Invalid data bits",
+                        ));
+                    }
+                };
+                let stop_bits = match stop_bits {
+                    1 => StopBits::One,
+                    2 => StopBits::Two,
+                    _ => {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "Invalid stop bits",
+                        ));
+                    }
+                };
+                let flow_control = match flow_control {
+                    Some(SerialFlowControl::Hardware) => Some(FlowControl::Hardware),
+                    Some(SerialFlowControl::Software) => Some(FlowControl::Software),
+                    None => None,
+                };
+                boot(SerialSession::new(
+                    path,
+                    baud_rate,
+                    data_bits,
+                    stop_bits,
+                    flow_control,
+                ))
+            }
         }
     }
 }
@@ -91,6 +157,27 @@ enum SessionSubcommand {
         rows: NonZeroU16,
         #[arg(long, default_value_t = NonZeroU16::new(80).unwrap(), conflicts_with = "no_pty")]
         cols: NonZeroU16,
+    },
+    Serial {
+        path: PathBuf,
+        #[arg(long, default_value_t = NonZeroU32::new(38400).unwrap())]
+        baud_rate: NonZeroU32,
+        #[arg(long, default_value_t = 8)]
+        data_bits: u8,
+        #[arg(long, default_value_t = 1)]
+        stop_bits: u8,
+        #[arg(
+            long,
+            default_value_t = false,
+            conflicts_with = "software_flow_control"
+        )]
+        hardware_flow_control: bool,
+        #[arg(
+            long,
+            default_value_t = false,
+            conflicts_with = "hardware_flow_control"
+        )]
+        software_flow_control: bool,
     },
 }
 
@@ -162,6 +249,41 @@ impl FromStr for SessionConfig {
                     }
                 } else {
                     unreachable!()
+                }
+            }
+            #[cfg(feature = "serial")]
+            SessionSubcommand::Serial {
+                path,
+                baud_rate,
+                data_bits,
+                stop_bits,
+                hardware_flow_control,
+                software_flow_control,
+            } => {
+                if hardware_flow_control {
+                    SessionConfig::Serial {
+                        path,
+                        baud_rate,
+                        data_bits,
+                        stop_bits,
+                        flow_control: Some(SerialFlowControl::Hardware),
+                    }
+                } else if software_flow_control {
+                    SessionConfig::Serial {
+                        path,
+                        baud_rate,
+                        data_bits,
+                        stop_bits,
+                        flow_control: Some(SerialFlowControl::Software),
+                    }
+                } else {
+                    SessionConfig::Serial {
+                        path,
+                        baud_rate,
+                        data_bits,
+                        stop_bits,
+                        flow_control: None,
+                    }
                 }
             }
         })

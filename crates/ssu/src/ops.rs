@@ -142,7 +142,7 @@ pub enum SSUOp<const OPEN_LEN: usize> {
     /// Parameters: session_id (u8)
     Select(u8),
     /// Reset: INTRO OP_RESET sid TERM
-    Reset(u8),
+    Reset(Option<u8>),
     /// Close: INTRO OP_CLOSE sid status TERM
     Close(u8, bool),
     /// Add credits: INTRO OP_ADDCR sid x y z TERM
@@ -295,7 +295,11 @@ impl<const OPEN_LEN: usize> SSUOp<OPEN_LEN> {
                 if params.len() != 1 {
                     return Err(ParseError::InvalidParameter);
                 }
-                Ok(SSUOp::Reset(params[0].wrapping_sub(b'A')))
+                if params[0] == b'@' {
+                    Ok(SSUOp::Reset(None)) // all
+                } else {
+                    Ok(SSUOp::Reset(Some(params[0].wrapping_sub(b'A'))))
+                }
             }
             OP_ADDCR => {
                 let session_id = params[0].wrapping_sub(b'A');
@@ -459,7 +463,11 @@ impl<const OPEN_LEN: usize> SSUOp<OPEN_LEN> {
             SSUOp::Reset(session_id) => {
                 buf[pos] = OP_RESET;
                 pos += 1;
-                buf[pos] = *session_id + b'A';
+                if let Some(session_id) = session_id {
+                    buf[pos] = *session_id + b'A';
+                } else {
+                    buf[pos] = b'@';
+                }
                 pos += 1;
             }
             SSUOp::AddCredits {

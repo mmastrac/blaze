@@ -347,6 +347,12 @@ impl Credits {
         }
     }
 
+    pub fn zero_all(&self) {
+        self.session_to_peer.store(0, Ordering::Release);
+        self.peer_to_session.store(0, Ordering::Release);
+        self.waker.maybe_wake();
+    }
+
     pub fn zero(&self, slot: CreditsSlot) {
         self.slot(slot).store(0, Ordering::Release);
     }
@@ -707,8 +713,7 @@ impl ServerWrite {
                     session.clear();
                 }
                 for credit in &self.credits {
-                    credit.zero(CreditsSlot::SessionToPeer);
-                    credit.zero(CreditsSlot::PeerToSession);
+                    credit.zero_all();
                 }
 
                 let max_sessions = max_sessions.max(self.server.max_session());
@@ -775,6 +780,22 @@ impl ServerWrite {
                         code: 0,
                     })
                     .await;
+            }
+            SSUOp::Reset(session_id) => {
+                self.outgoing_command_queue
+                    .push(SSUOp::Report {
+                        op: SSUOpcode::Reset,
+                        session_id,
+                        code: 0,
+                    })
+                    .await;
+                if let Some(session_id) = session_id {
+                    self.credits[session_id as usize].zero_all();
+                } else {
+                    for i in 0..self.server.max_session() {
+                        self.credits[i as usize].zero_all();
+                    }
+                }
             }
             SSUOp::Verify(session_id) => {
                 self.outgoing_command_queue
