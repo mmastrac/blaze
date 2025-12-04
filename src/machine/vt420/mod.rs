@@ -81,7 +81,7 @@ impl System {
         let comm_a = if let Some(config) = comm1 {
             connect_duart(channel_a, config)?
         } else {
-            crate::host::demo_comm::DemoComm::new(channel_a)
+            crate::host::demo::DemoComm::new(channel_a)
         };
 
         #[cfg(not(feature = "demo"))]

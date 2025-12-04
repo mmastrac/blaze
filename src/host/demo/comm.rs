@@ -1,28 +1,33 @@
-use std::{cell::RefCell, collections::VecDeque, io, rc::Rc};
+use std::{cell::RefCell, rc::Rc};
 
 use ratatui::{
-    backend::{ClearType, WindowSize},
-    buffer::Cell,
-    layout::{Constraint, HorizontalAlignment, Position, Size},
+    layout::{Constraint, HorizontalAlignment, Size},
     style::{Style, Stylize},
     symbols::border,
-    text::{Line, Span},
+    text::{Line, Span, Text},
     widgets::{Block, List, ListDirection, ListState, Padding, Paragraph, Wrap},
 };
 use ssu::session::{SessionEndpoint, SessionRecvEndpoint, SessionSendEndpoint, Ticked};
 use tracing::trace;
 
-use crate::{host::comm::CommSession, machine::generic::duart::DUARTChannel};
+use super::ratatui_backend::DecBackend;
+use crate::{
+    host::{
+        comm::CommSession,
+        demo::ratatui_backend::{VT_DOUBLE_HEIGHT_BOTTOM_LINE, VT_DOUBLE_HEIGHT_TOP_LINE},
+    },
+    machine::generic::duart::DUARTChannel,
+};
 
 const VT420_BORDER_SET: border::Set = border::Set {
-    top_left: "|",
-    top_right: "|",
-    bottom_left: "+",
-    bottom_right: "+",
-    vertical_left: "|",
-    vertical_right: "|",
+    top_left: "\u{00f8}",
+    top_right: "\u{00f8}",
+    bottom_left: "\u{00ed}",
+    bottom_right: "\u{00ea}",
+    vertical_left: "\u{00f8}",
+    vertical_right: "\u{00f8}",
     horizontal_top: " ",
-    horizontal_bottom: "-",
+    horizontal_bottom: "\u{00f1}",
 };
 
 const PAGE_MENU_ITEMS: [&str; 11] = [
@@ -39,308 +44,20 @@ const PAGE_MENU_ITEMS: [&str; 11] = [
     "Page size 72",
 ];
 
-#[derive(Clone)]
-struct Pending {
-    pending: Rc<RefCell<VecDeque<u8>>>,
-    size: Rc<RefCell<Size>>,
-    cursor_pos: Rc<RefCell<Position>>,
-    current_style: Rc<RefCell<ratatui::style::Style>>,
-    cursor_visible: Rc<RefCell<bool>>,
-}
-
-impl Default for Pending {
-    fn default() -> Self {
-        Self {
-            pending: Rc::new(RefCell::new(VecDeque::new())),
-            size: Rc::new(RefCell::new(Size::new(80, 24))),
-            cursor_pos: Rc::new(RefCell::new(Position::new(0, 0))),
-            current_style: Rc::new(RefCell::new(ratatui::style::Style::default())),
-            cursor_visible: Rc::new(RefCell::new(true)),
-        }
-    }
-}
-
-impl io::Write for Pending {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.pending.borrow_mut().extend(buf);
-        Ok(buf.len())
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-impl Pending {
-    fn write_bytes(&self, bytes: &[u8]) {
-        self.pending.borrow_mut().extend(bytes);
-    }
-
-    fn write_str(&self, s: &str) {
-        self.pending.borrow_mut().extend(s.as_bytes());
-    }
-
-    fn write_csi(&self, params: &str, final_byte: u8) {
-        self.write_bytes(b"\x1b[");
-        self.write_str(params);
-        self.write_bytes(&[final_byte]);
-    }
-
-    fn set_cursor_pos(&self, x: u16, y: u16) {
-        let mut pos = self.cursor_pos.borrow_mut();
-        if pos.x != x || pos.y != y {
-            // VT420 uses 1-based indexing, and format is ESC [ row ; col H
-            self.write_csi(&format!("{};{}", y + 1, x + 1), b'H');
-            pos.x = x;
-            pos.y = y;
-        }
-    }
-
-    fn apply_style(&self, style: &ratatui::style::Style) {
-        let mut current = self.current_style.borrow_mut();
-        if *current == *style {
-            return;
-        }
-
-        // Build SGR (Select Graphic Rendition) sequence
-        let mut codes = Vec::new();
-
-        // Reset first
-        codes.push(0);
-
-        // Text modifiers
-        if style.add_modifier.contains(ratatui::style::Modifier::BOLD) {
-            codes.push(1);
-        }
-        if style.add_modifier.contains(ratatui::style::Modifier::DIM) {
-            codes.push(2);
-        }
-        if style
-            .add_modifier
-            .contains(ratatui::style::Modifier::ITALIC)
-        {
-            codes.push(3);
-        }
-        if style
-            .add_modifier
-            .contains(ratatui::style::Modifier::UNDERLINED)
-        {
-            codes.push(4);
-        }
-        if style
-            .add_modifier
-            .contains(ratatui::style::Modifier::SLOW_BLINK)
-        {
-            codes.push(5);
-        }
-        if style
-            .add_modifier
-            .contains(ratatui::style::Modifier::RAPID_BLINK)
-        {
-            codes.push(6);
-        }
-        if style
-            .add_modifier
-            .contains(ratatui::style::Modifier::REVERSED)
-        {
-            codes.push(7);
-        }
-        if style
-            .add_modifier
-            .contains(ratatui::style::Modifier::HIDDEN)
-        {
-            codes.push(8);
-        }
-        if style
-            .add_modifier
-            .contains(ratatui::style::Modifier::CROSSED_OUT)
-        {
-            codes.push(9);
-        }
-
-        // Remove modifiers
-        if style.sub_modifier.contains(ratatui::style::Modifier::BOLD) {
-            codes.push(22);
-        }
-        if style.sub_modifier.contains(ratatui::style::Modifier::DIM) {
-            codes.push(22);
-        }
-        if style
-            .sub_modifier
-            .contains(ratatui::style::Modifier::ITALIC)
-        {
-            codes.push(23);
-        }
-        if style
-            .sub_modifier
-            .contains(ratatui::style::Modifier::UNDERLINED)
-        {
-            codes.push(24);
-        }
-        if style
-            .sub_modifier
-            .contains(ratatui::style::Modifier::SLOW_BLINK)
-        {
-            codes.push(25);
-        }
-        if style
-            .sub_modifier
-            .contains(ratatui::style::Modifier::RAPID_BLINK)
-        {
-            codes.push(25);
-        }
-        if style
-            .sub_modifier
-            .contains(ratatui::style::Modifier::REVERSED)
-        {
-            codes.push(27);
-        }
-        if style
-            .sub_modifier
-            .contains(ratatui::style::Modifier::HIDDEN)
-        {
-            codes.push(28);
-        }
-        if style
-            .sub_modifier
-            .contains(ratatui::style::Modifier::CROSSED_OUT)
-        {
-            codes.push(29);
-        }
-
-        // Write SGR sequence: ESC [ codes... m
-        if !codes.is_empty() {
-            let params: Vec<String> = codes.iter().map(|c| c.to_string()).collect();
-            self.write_csi(&params.join(";"), b'm');
-        }
-
-        *current = *style;
-    }
-}
-
-impl ratatui::backend::Backend for Pending {
-    type Error = io::Error;
-
-    fn draw<'a, I>(&mut self, content: I) -> Result<(), Self::Error>
-    where
-        I: Iterator<Item = (u16, u16, &'a Cell)>,
-    {
-        for (x, y, cell) in content {
-            // Move cursor if needed
-            self.set_cursor_pos(x, y);
-
-            // Apply style if changed
-            self.apply_style(&cell.style());
-
-            // Write the symbol
-            let symbol = cell.symbol();
-            if !symbol.is_empty() {
-                self.write_str(symbol);
-                // Update cursor position after writing
-                let mut pos = self.cursor_pos.borrow_mut();
-                pos.x = x + 1;
-            }
-        }
-        Ok(())
-    }
-
-    fn hide_cursor(&mut self) -> Result<(), Self::Error> {
-        let mut visible = self.cursor_visible.borrow_mut();
-        if *visible {
-            // ESC [ ? 25 l - Hide cursor
-            self.write_csi("?25", b'l');
-            *visible = false;
-        }
-        Ok(())
-    }
-
-    fn show_cursor(&mut self) -> Result<(), Self::Error> {
-        let mut visible = self.cursor_visible.borrow_mut();
-        if !*visible {
-            // ESC [ ? 25 h - Show cursor
-            self.write_csi("?25", b'h');
-            *visible = true;
-        }
-        Ok(())
-    }
-
-    fn get_cursor_position(&mut self) -> Result<Position, Self::Error> {
-        Ok(*self.cursor_pos.borrow())
-    }
-
-    fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> Result<(), Self::Error> {
-        let pos = position.into();
-        self.set_cursor_pos(pos.x, pos.y);
-        Ok(())
-    }
-
-    fn clear(&mut self) -> Result<(), Self::Error> {
-        // ESC [ 2 J - Clear entire screen
-        self.write_csi("2", b'J');
-        // Reset cursor to top-left
-        self.set_cursor_pos(0, 0);
-        // Reset style
-        *self.current_style.borrow_mut() = ratatui::style::Style::default();
-        self.write_csi("0", b'm');
-        Ok(())
-    }
-
-    fn clear_region(&mut self, clear_type: ClearType) -> Result<(), Self::Error> {
-        // VT420 clear operations
-        match clear_type {
-            ClearType::All => {
-                // ESC [ 2 J - Clear entire screen
-                self.write_csi("2", b'J');
-            }
-            ClearType::CurrentLine => {
-                // ESC [ 2 K - Clear entire line
-                self.write_csi("2", b'K');
-            }
-            ClearType::AfterCursor => {
-                // ESC [ 0 J - Clear from cursor to end of screen
-                self.write_csi("0", b'J');
-            }
-            ClearType::BeforeCursor => {
-                // ESC [ 1 J - Clear from beginning to cursor
-                self.write_csi("1", b'J');
-            }
-            ClearType::UntilNewLine => {
-                // ESC [ 0 K - Clear from cursor to end of line
-                self.write_csi("0", b'K');
-            }
-        }
-        Ok(())
-    }
-
-    fn size(&self) -> Result<Size, Self::Error> {
-        Ok(*self.size.borrow())
-    }
-
-    fn window_size(&mut self) -> Result<WindowSize, Self::Error> {
-        Ok(WindowSize {
-            columns_rows: *self.size.borrow(),
-            pixels: Size::new(10, 16),
-        })
-    }
-
-    fn flush(&mut self) -> Result<(), Self::Error> {
-        Ok(())
-    }
-}
-
 pub struct DemoComm {
     input_queue: vt_push_parser::VTPushParser,
-    pending: Pending,
+    pending: DecBackend,
     xon: bool,
     input: bool,
     page: u8,
 
-    screen: ratatui::Terminal<Pending>,
+    screen: ratatui::Terminal<DecBackend>,
     list_state: ListState,
 }
 
 impl DemoComm {
     pub fn new(duart: DUARTChannel) -> CommSession {
-        let mut pending = Pending::default();
+        let mut pending = DecBackend::default();
         pending.size = Rc::new(RefCell::new(Size::new(80, 24)));
         let screen = ratatui::Terminal::new(pending.clone()).unwrap();
         let demo_comm = Self {
@@ -485,18 +202,19 @@ impl SessionEndpoint for DemoComm {
 
         self.input = false;
 
-        // Move cursor to top-left corner and set double width line for
-        // our title (we do this before and after because Ratatui
-        // doesn't _really_ support it)
         self.pending.pending.borrow_mut().extend(b"\x1b[0;0H");
-        self.pending.pending.borrow_mut().extend(b"\x1b#6");
+        self.pending.pending.borrow_mut().extend(b"\x1b)0");
 
         _ = self.screen.draw(|f| {
             let layout =
-                ratatui::layout::Layout::vertical(vec![Constraint::Length(1), Constraint::Fill(1)]);
+                ratatui::layout::Layout::vertical(vec![Constraint::Length(2), Constraint::Fill(1)]);
             let areas = layout.split(f.area());
             f.render_widget(
-                Line::from(vec![Span::from("    Blaze")]).reversed(),
+                Text::from(vec![
+                    Line::from("    Blaze").fg(VT_DOUBLE_HEIGHT_TOP_LINE),
+                    Line::from("    Blaze").fg(VT_DOUBLE_HEIGHT_BOTTOM_LINE),
+                ])
+                .reversed(),
                 areas[0],
             );
 
@@ -527,10 +245,8 @@ impl SessionEndpoint for DemoComm {
 
         self.pending.pending.borrow_mut().extend(b"\x1b[\"v");
 
-        // Move cursor to top-left corner and set double width line for
-        // our title
+        // Move cursor to top-left corner
         self.pending.pending.borrow_mut().extend(b"\x1b[0;0H");
-        self.pending.pending.borrow_mut().extend(b"\x1b#6");
     }
 
     fn split(
