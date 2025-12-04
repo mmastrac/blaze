@@ -89,43 +89,13 @@ impl SessionConfig {
                 data_bits,
                 stop_bits,
                 flow_control,
-            } => {
-                use serialport::{DataBits, FlowControl, StopBits};
-                let data_bits = match data_bits {
-                    5 => DataBits::Five,
-                    6 => DataBits::Six,
-                    7 => DataBits::Seven,
-                    8 => DataBits::Eight,
-                    _ => {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::InvalidInput,
-                            "Invalid data bits",
-                        ));
-                    }
-                };
-                let stop_bits = match stop_bits {
-                    1 => StopBits::One,
-                    2 => StopBits::Two,
-                    _ => {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::InvalidInput,
-                            "Invalid stop bits",
-                        ));
-                    }
-                };
-                let flow_control = match flow_control {
-                    Some(SerialFlowControl::Hardware) => Some(FlowControl::Hardware),
-                    Some(SerialFlowControl::Software) => Some(FlowControl::Software),
-                    None => None,
-                };
-                boot(SerialSession::new(
-                    path,
-                    baud_rate,
-                    data_bits,
-                    stop_bits,
-                    flow_control,
-                ))
-            }
+            } => boot(SerialSession::new(
+                path,
+                baud_rate,
+                data_bits,
+                stop_bits,
+                flow_control,
+            )),
         }
     }
 }

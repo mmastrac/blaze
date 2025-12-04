@@ -9,6 +9,8 @@ use ssu::session::loopback::LoopbackSession;
 use ssu::session::pipe::{DualPipeSession, SinglePipeSession};
 #[cfg(feature = "pty")]
 use ssu::session::pty::PtySession;
+#[cfg(feature = "serial")]
+use ssu::session::serial::SerialSession;
 use ssu::session::{IoSessionEndpoint, SessionConfig, SessionEndpoint, exec::ExecSession};
 
 use crate::machine::generic::duart::DUARTChannel;
@@ -145,5 +147,16 @@ pub fn connect_duart(
         SessionConfig::ExecPty { cmd, rows, cols } => {
             boot_io(channel, PtySession::new(cmd, cols, rows))?
         }
+        #[cfg(feature = "serial")]
+        SessionConfig::Serial {
+            path,
+            baud_rate,
+            data_bits,
+            stop_bits,
+            flow_control,
+        } => boot_io(
+            channel,
+            SerialSession::new(path, baud_rate, data_bits, stop_bits, flow_control),
+        )?,
     })
 }
