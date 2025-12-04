@@ -220,7 +220,6 @@ pub async fn main_async(
         let surface_texture = SurfaceTexture::new(WIDTH, HEIGHT, Arc::clone(&window));
 
         let pixel_builder = PixelsBuilder::new(WIDTH, HEIGHT, surface_texture);
-
         #[cfg(target_arch = "wasm32")]
         let pixel_builder = {
             // Web targets do not support the default texture format
@@ -228,7 +227,7 @@ pub async fn main_async(
             pixel_builder
                 .texture_format(texture_format)
                 .surface_texture_format(texture_format)
-                .wgpu_backend(Backends::GL)
+                .wgpu_backend(pixels::wgpu::Backends::GL)
         };
 
         pixel_builder.build_async().await?
