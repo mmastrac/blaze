@@ -488,6 +488,35 @@ pub fn decode_font(vram: &[u8], address: u32, is_80: bool, char: &mut [u16; 16])
     }
 }
 
+/// Decode a downloadable font. The 10-pixel-width font is stored slightly different. The
+/// additional two rows don't come from the char below but rather from a set of extra bits
+/// stored four columns to the left.
+pub fn decode_font_downloadable(
+    vram: &[u8],
+    c: u16,
+    screen_2: bool,
+    mut address: u32,
+    is_80: bool,
+    char: &mut [u16; 16],
+) {
+    if is_80 {
+        // 12 columns of chars, then 3 columns of extra bits 4 columns left
+        if screen_2 {
+            address += 16;
+        }
+        let extra = 0x8000 + ((0x180 + ((c - 0x1a0) / 4)) * 32) + (screen_2 as u16 * 16);
+        let shift = (c & 3) * 2;
+        for y in 0..16 {
+            char[y] = vram[address as usize + y] as u16
+                | (((vram[extra as usize + y] >> shift) & 3) as u16) << 8;
+        }
+    } else {
+        for y in 0..16 {
+            char[y] = (vram[address as usize + y] >> 2) as u16;
+        }
+    }
+}
+
 /// This handles a read of 0x7ff6. We don't know what this register does, but it
 /// appears to return something that is a function of 80/132 column mode,
 /// invert, the "screen selection toggle" row attribute (along with double-width

@@ -12,6 +12,7 @@ use ratatui::crossterm::event::KeyModifiers;
 use tracing::info;
 
 use crate::machine::generic::color::DEFAULT_COLOR;
+use crate::machine::vt420::video::decode_font_downloadable;
 use crate::{
     System,
     machine::vt420::video::{RowFlags, decode_font, decode_vram},
@@ -62,8 +63,8 @@ impl FramebufferRender {
                 if render.row_flags.status_row {
                     render.row = 400;
                     render.row_offset = 800 * 4 * render.row;
-                } else if render.smooth.2 != 0
-                && (render.smooth.0..=render.smooth.1).contains(&row) {
+                } else if render.smooth.2 != 0 && (render.smooth.0..=render.smooth.1).contains(&row)
+                {
                     if row == render.smooth.0 {
                         render.start_row = render.smooth.2 as usize;
                         render.row_flags.row_height -= render.smooth.2;
@@ -92,21 +93,19 @@ impl FramebufferRender {
                     };
                     let neg = DEFAULT_COLOR.background;
 
-                    if !render.row_flags.status_row
-                        && attr.is_upper_bit() {
-                            pos = if system.memory.mapper.is_blink() {
-                                if attr.is_bold() {
-                                    DEFAULT_COLOR.foreground
-                                } else {
-                                    DEFAULT_COLOR.background
-                                }
-                            } else if attr.is_bold() {
-                                DEFAULT_COLOR.bold
-                            } else {
+                    if !render.row_flags.status_row && attr.is_upper_bit() {
+                        pos = if system.memory.mapper.is_blink() {
+                            if attr.is_bold() {
                                 DEFAULT_COLOR.foreground
+                            } else {
+                                DEFAULT_COLOR.background
                             }
+                        } else if attr.is_bold() {
+                            DEFAULT_COLOR.bold
+                        } else {
+                            DEFAULT_COLOR.foreground
                         }
-                    ;
+                    };
 
                     if render.row_flags.invert ^ attr.is_reverse() {
                         [pos, neg]
@@ -115,13 +114,29 @@ impl FramebufferRender {
                     }
                 };
 
-                let font_address_base = c * 16 + 0x8000 + render.row_flags.font as usize;
-                decode_font(
-                    system.memory.vram.as_ref(),
-                    font_address_base as _,
-                    render.row_flags.is_80,
-                    &mut font,
-                );
+                // Downloadable fonts follow a different rendering rule
+                if c / 2 >= 0x1A0 {
+                    // Custom font data
+                    let font_address_base =
+                        c * 16 + 0x8000 + (!render.row_flags.is_80 as usize) * 0x4000;
+                    decode_font_downloadable(
+                        system.memory.vram.as_ref(),
+                        (c / 2) as u16,
+                        render.row_flags.screen_2,
+                        font_address_base as _,
+                        render.row_flags.is_80,
+                        &mut font,
+                    );
+                } else {
+                    let font_address_base = c * 16 + 0x8000 + render.row_flags.font as usize;
+                    decode_font(
+                        system.memory.vram.as_ref(),
+                        font_address_base as _,
+                        render.row_flags.is_80,
+                        &mut font,
+                    );
+                };
+
                 let width = if render.row_flags.is_80 { 10 } else { 6 };
                 let mut offset = render.row_offset;
                 for mut y in 0..render.row_flags.row_height as usize {
