@@ -39,7 +39,7 @@ struct Character {
 
 impl fmt::Debug for Character {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Character {{\n")?;
+        writeln!(f, "Character {{")?;
         for row in 0..self.height {
             write!(f, "    ")?;
             for col in 0..self.width {
@@ -53,9 +53,9 @@ impl fmt::Debug for Character {
                     }
                 )?;
             }
-            write!(f, "\n")?;
+            writeln!(f)?;
         }
-        write!(f, "}}\n")
+        writeln!(f, "}}")
     }
 }
 
@@ -180,7 +180,7 @@ fn encode_font(width: u8, height: u8) -> String {
         16 => 0,
         _ => unreachable!(),
     };
-    format!("1;1;1;{};{};2;{};0{{ @", width, pss, height)
+    format!("1;1;1;{width};{pss};2;{height};0{{ @")
 }
 
 pub fn main() {
@@ -190,7 +190,7 @@ pub fn main() {
     for width in [10, 6] {
         // 48/36/25
         for height in [16, 10, 8] {
-            println!("Generating {}x{} font...", height, width);
+            println!("Generating {height}x{width} font...");
             print!("\x1bP{}", encode_font(width, height));
             for c in 0..94 {
                 let c = match args.style {

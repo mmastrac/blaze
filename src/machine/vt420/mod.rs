@@ -237,7 +237,7 @@ impl System {
             self.memory.vram.as_ref(),
             &self.memory.mapper,
             |text, _, _, _| {
-                text.push_str("\n");
+                text.push('\n');
             },
             |text, _col, ch, _attrs| {
                 if let Some(c) = unicode::map_char(ch) {
@@ -360,7 +360,7 @@ mod tests {
     #[test]
     fn test_boots() {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        let rom = fs::read(&format!("{}/roms/vt420/23-068E9-00.bin", manifest_dir)).unwrap();
+        let rom = fs::read(format!("{manifest_dir}/roms/vt420/23-068E9-00.bin")).unwrap();
         let mut system = System::new(
             rom,
             None,
@@ -377,10 +377,10 @@ mod tests {
         }
 
         let (keyboard_bytes, keyboard_commands) = system.keyboard.stop_collecting_commands();
-        eprintln!("Keyboard bytes: {:02X?}", keyboard_bytes);
+        eprintln!("Keyboard bytes: {keyboard_bytes:02X?}");
         eprintln!("Keyboard commands:");
         for command in keyboard_commands {
-            eprintln!("  {:?}", command);
+            eprintln!("  {command:?}");
         }
 
         let screen = system.dump_screen_text();

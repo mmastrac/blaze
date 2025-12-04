@@ -1,4 +1,4 @@
-use std::fs::{self, File};
+use std::fs::{self};
 use std::io;
 use std::time::{Duration, Instant};
 
@@ -120,7 +120,7 @@ impl<'a> Widget for Screen<'a> {
                         area.top() + render.row_idx as u16,
                     )) {
                         if render.row_flags.status_row && attr.is_upper_bit() {
-                            c = c | 0x800;
+                            c |= 0x800;
                         }
                         cell.set_char(unicode::map_char(c).unwrap_or('.'));
                         cell.set_style(style);
@@ -141,7 +141,7 @@ impl<'a> Widget for Screen<'a> {
             return;
         }
 
-        let Some(rows) = self.mapper.row_count(&vram) else {
+        let Some(rows) = self.mapper.row_count(vram) else {
             return;
         };
 
@@ -223,7 +223,7 @@ impl<'a> Widget for Screen<'a> {
                     let mut col = 0;
                     for (i, b) in vram[row as usize..row as usize + 256].iter().enumerate() {
                         if col < area.width {
-                            let hex_str = format!("{:02X}", b);
+                            let hex_str = format!("{b:02X}");
                             for ch in hex_str.chars() {
                                 if let Some(cell) =
                                     buf.cell_mut((area.left() + col, area.top() + row_idx))
@@ -266,7 +266,7 @@ impl<'a> Widget for Screen<'a> {
                         }
                     }
                     for (i, char_code) in line.iter().take(132).enumerate() {
-                        let hex_str = format!("{:03X}", char_code);
+                        let hex_str = format!("{char_code:03X}");
                         for ch in hex_str.chars() {
                             if col < area.width {
                                 if let Some(cell) =
@@ -320,6 +320,7 @@ fn run_inner(
 ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
     let mut running = true;
     let mut hex = DisplayMode::Normal;
+    #[cfg(feature = "pc-trace")]
     let mut pc_trace = false;
     let mut keyboard = CrosstermKeyboard::default();
     let mut terminal = ratatui::Terminal::new(CrosstermBackend::new(io::stdout()))?;
@@ -363,6 +364,7 @@ fn run_inner(
                     }
                     #[cfg(feature = "pc-trace")]
                     Some(KeyboardCommand::TogglePCTrace) => {
+                        use std::fs::File;
                         use std::io::Write;
                         if !pc_trace {
                             system.pc_bitset_current = system.pc_bitset.clone();
@@ -436,7 +438,7 @@ fn run_inner(
                             for j in 0..32 {
                                 let attr = vram[i * 32 + j];
                                 let style = Style::default().fg(Color::Indexed(attr));
-                                let text = Span::styled(format!("{:02X} ", attr), style);
+                                let text = Span::styled(format!("{attr:02X} "), style);
                                 vram_line.push_span(text);
                             }
                             f.render_widget(

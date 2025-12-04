@@ -62,17 +62,13 @@ impl FramebufferRender {
                 if render.row_flags.status_row {
                     render.row = 400;
                     render.row_offset = 800 * 4 * render.row;
-                } else {
-                    if render.smooth.2 != 0 {
-                        if (render.smooth.0..=render.smooth.1).contains(&row) {
-                            if row == render.smooth.0 {
-                                render.start_row = render.smooth.2 as usize;
-                                render.row_flags.row_height =
-                                    render.row_flags.row_height - render.smooth.2;
-                            } else if row == render.smooth.1 {
-                                render.row_flags.row_height = render.smooth.2;
-                            }
-                        }
+                } else if render.smooth.2 != 0
+                && (render.smooth.0..=render.smooth.1).contains(&row) {
+                    if row == render.smooth.0 {
+                        render.start_row = render.smooth.2 as usize;
+                        render.row_flags.row_height -= render.smooth.2;
+                    } else if row == render.smooth.1 {
+                        render.row_flags.row_height = render.smooth.2;
                     }
                 }
             },
@@ -96,23 +92,21 @@ impl FramebufferRender {
                     };
                     let neg = DEFAULT_COLOR.background;
 
-                    if !render.row_flags.status_row {
-                        if attr.is_upper_bit() {
+                    if !render.row_flags.status_row
+                        && attr.is_upper_bit() {
                             pos = if system.memory.mapper.is_blink() {
                                 if attr.is_bold() {
                                     DEFAULT_COLOR.foreground
                                 } else {
                                     DEFAULT_COLOR.background
                                 }
+                            } else if attr.is_bold() {
+                                DEFAULT_COLOR.bold
                             } else {
-                                if attr.is_bold() {
-                                    DEFAULT_COLOR.bold
-                                } else {
-                                    DEFAULT_COLOR.foreground
-                                }
+                                DEFAULT_COLOR.foreground
                             }
                         }
-                    };
+                    ;
 
                     if render.row_flags.invert ^ attr.is_reverse() {
                         [pos, neg]
@@ -271,7 +265,7 @@ pub fn run(
         move |frame| render.render(&system_clone.borrow(), frame),
         stepper,
     )
-    .map_err(|e| format!("Graphics error: {}", e))?;
+    .map_err(|e| format!("Graphics error: {e}"))?;
 
     return Ok(system.borrow().instruction_count);
 }

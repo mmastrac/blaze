@@ -3,7 +3,6 @@ use std::future::{Future, poll_fn};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::task::{Context, Poll, Waker};
-use std::time::Duration;
 
 use tracing::{error, info, trace, warn};
 
@@ -11,7 +10,6 @@ use crate::buffer::{RingBufferHandle, SyncRingBuffer};
 use crate::ops::{
     INTRO, MAX_COMMAND_LEN, MAX_LABEL_LEN, SSUOp, SSUOpcode, SSUState, SSUString, TERM,
 };
-use crate::session::SessionEndpoint;
 
 /// The maximum number of bytes to send in a single chunk before
 /// trying to poll the other session.

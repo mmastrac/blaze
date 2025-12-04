@@ -5,7 +5,7 @@ use std::{fs::File, io, os::fd::OwnedFd};
 use pty_process::blocking::Command;
 
 use crate::session::IoSessionEndpoint;
-use crate::session::io::{IoSession, IoSessionReadWrite};
+use crate::session::io::IoSessionReadWrite;
 
 pub struct PtySession {
     command: String,

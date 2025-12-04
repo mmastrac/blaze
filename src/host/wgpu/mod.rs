@@ -9,7 +9,6 @@ const TIME_STEP: Duration = Duration::from_micros(1_000_000 / FPS as u64);
 use game_loop::winit;
 
 use game_loop::{Time, TimeTrait as _, game_loop};
-use pixels::wgpu::{self, Backends};
 use pixels::{Error, Pixels, PixelsBuilder, SurfaceTexture};
 use std::sync::Arc;
 use std::time::Duration;
@@ -220,7 +219,7 @@ pub async fn main_async(
 
         let surface_texture = SurfaceTexture::new(WIDTH, HEIGHT, Arc::clone(&window));
 
-        let pixel_builder = PixelsBuilder::new(WIDTH as u32, HEIGHT as u32, surface_texture);
+        let pixel_builder = PixelsBuilder::new(WIDTH, HEIGHT, surface_texture);
 
         #[cfg(target_arch = "wasm32")]
         let pixel_builder = {
@@ -244,7 +243,7 @@ pub async fn main_async(
         event_loop,
         window,
         terminal,
-        FPS as u32,
+        FPS,
         0.1,
         move |g| {
             // Update the world

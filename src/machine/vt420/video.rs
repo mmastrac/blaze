@@ -546,7 +546,7 @@ fn calculate_7ff6_read(a: u8, b: u8, vram: &[u8]) -> u8 {
         a, b, c_idx, c, vram[1]
     );
 
-    return c ^ mask_bits;
+    c ^ mask_bits
 }
 
 #[cfg(test)]
@@ -634,7 +634,7 @@ mod tests {
                 }
             }
             runs.push((current_value.unwrap(), current_count));
-            println!("Runs: {:?}", runs);
+            println!("Runs: {runs:?}");
             assert!(
                 runs.windows(2)
                     .any(|w| w[0].0 && w[0].1 >= 15 && !w[1].0 && w[1].1 >= 15)
@@ -656,7 +656,7 @@ mod tests {
         for (i, &row) in ROWS.iter().enumerate() {
             vram[i * 2] = row << 1;
         }
-        eprintln!("vram = {:02X?}", vram);
+        eprintln!("vram = {vram:02X?}");
 
         // Set 7ff3/7ff4 to various values, with the second field set to zero
         const EXPECTED_0: [u8; 32] = hex!(
@@ -685,10 +685,9 @@ mod tests {
 
             let result = calculate_7ff6_read(mapper3, mapper4, &vram);
             eprintln!(
-                "i = {:02X?}, a = {:02X?}, b = {:02X?}, result = {:02X?}",
-                i, mapper3, mapper4, result
+                "i = {i:02X?}, a = {mapper3:02X?}, b = {mapper4:02X?}, result = {result:02X?}"
             );
-            assert_eq!(result, EXPECTED_0[i], "vram = {:02X?}", vram);
+            assert_eq!(result, EXPECTED_0[i], "vram = {vram:02X?}");
         }
 
         // Set the second field of all rows to 0x0c, 0x08, 0x04, 0x00
@@ -704,7 +703,7 @@ mod tests {
             }
 
             let result = calculate_7ff6_read(mapper3, mapper4, &vram);
-            assert_eq!(result, EXPECTED_1[i], "vram = {:02X?}", vram);
+            assert_eq!(result, EXPECTED_1[i], "vram = {vram:02X?}");
         }
 
         // Set bit 1 of a single field at a time, starting from the second last (ie: 0x0f in the list of ROWS above)
@@ -715,7 +714,7 @@ mod tests {
             vram[i * 2 + 3] = 0;
 
             let result = calculate_7ff6_read(mapper3, mapper4, &vram);
-            assert_eq!(result, EXPECTED_2[i], "vram = {:02X?}", vram);
+            assert_eq!(result, EXPECTED_2[i], "vram = {vram:02X?}");
         }
     }
 

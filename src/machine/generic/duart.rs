@@ -254,7 +254,7 @@ impl DUART {
                 }
             }
             ReadRegister::RxHoldingRegisterA => {
-                self.channel_a_rx_pending.replace(None).take().unwrap_or(0)
+                self.channel_a_rx_pending.replace(None).unwrap_or(0)
             }
             ReadRegister::StatusRegisterB => {
                 let mut status = 0;
@@ -276,7 +276,7 @@ impl DUART {
                 }
             }
             ReadRegister::RxHoldingRegisterB => {
-                self.channel_b_rx_pending.replace(None).take().unwrap_or(0)
+                self.channel_b_rx_pending.replace(None).unwrap_or(0)
             }
             ReadRegister::InputPortsIP0ToIP6 => self.input_bits,
             _ => {

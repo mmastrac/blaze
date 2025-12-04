@@ -261,9 +261,9 @@ fn run(
     #[cfg(not(target_arch = "wasm32"))]
     let elapsed = start_time.elapsed();
     println!("CPU execution completed:");
-    println!("  Instructions executed: {}", instruction_count);
+    println!("  Instructions executed: {instruction_count}");
     #[cfg(not(target_arch = "wasm32"))]
-    println!("  Time elapsed: {:?}", elapsed);
+    println!("  Time elapsed: {elapsed:?}");
     #[cfg(not(target_arch = "wasm32"))]
     if elapsed.as_secs_f64() > 0.0 {
         let ips = instruction_count as f64 / elapsed.as_secs_f64();

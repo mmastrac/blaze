@@ -92,7 +92,7 @@ fn disassemble(rom: &[u8], output: &Path, debug: bool) -> io::Result<()> {
     let mut roots: Vec<(Flow, u16, u16)> = vec![];
 
     let mut address_state = Vec::with_capacity(65536);
-    address_state.extend(std::iter::repeat(AddressState::default()).take(65536));
+    address_state.extend(std::iter::repeat_n(AddressState::default(), 65536));
 
     // Add the 8051 interrupt vectors
     roots.push((Flow::Root, 0x0000, 0x0000));
@@ -117,7 +117,7 @@ fn disassemble(rom: &[u8], output: &Path, debug: bool) -> io::Result<()> {
         .enumerate()
         .filter(|(_, window)| window[0] == 0x74 && window[2] == 0x02 && window[3] == 0)
     {
-        println!("Root: thunk at 0x{:04X}", pc);
+        println!("Root: thunk at 0x{pc:04X}");
         roots.push((Flow::Root, pc as u16, pc as u16));
     }
 
@@ -136,12 +136,12 @@ fn disassemble(rom: &[u8], output: &Path, debug: bool) -> io::Result<()> {
             let pc = root.2;
             match &mut address_state[pc as usize] {
                 AddressState::Data => {
-                    println!("WARNING: Data at 0x{:04X}", pc);
+                    println!("WARNING: Data at 0x{pc:04X}");
                     roots.remove(0);
                     continue;
                 }
                 AddressState::InstructionContinue => {
-                    println!("WARNING: Instruction decoded from middle at 0x{:04X}", pc);
+                    println!("WARNING: Instruction decoded from middle at 0x{pc:04X}");
 
                     let mut chain = vec![pc, prev];
                     let mut current = prev;
@@ -159,13 +159,14 @@ fn disassemble(rom: &[u8], output: &Path, debug: bool) -> io::Result<()> {
                         if *root {
                             break;
                         }
-                        let next = *addrs.iter().find(|&&a| a != current).unwrap_or_else(|| {
-                            panic!("No next address, only found {:04X?}", addrs)
-                        });
+                        let next = *addrs
+                            .iter()
+                            .find(|&&a| a != current)
+                            .unwrap_or_else(|| panic!("No next address, only found {addrs:04X?}"));
                         chain.push(next);
                         current = next;
                     }
-                    println!("WARNING:   addrs = {:04X?}", chain);
+                    println!("WARNING:   addrs = {chain:04X?}");
                     roots.remove(0);
                     continue;
                 }
@@ -187,10 +188,10 @@ fn disassemble(rom: &[u8], output: &Path, debug: bool) -> io::Result<()> {
 
             let instruction = cpu.decode(&ctx, pc as u32);
             if debug {
-                println!("{:#}", instruction);
+                println!("{instruction:#}");
             }
             if instruction.mnemonic() == Opcode::Unknown {
-                println!("WARNING: Unknown instruction at 0x{:04X}", pc);
+                println!("WARNING: Unknown instruction at 0x{pc:04X}");
                 roots.remove(0);
                 continue;
             }
@@ -284,28 +285,25 @@ fn disassemble(rom: &[u8], output: &Path, debug: bool) -> io::Result<()> {
 
         let mut unknown_calls = BTreeMap::new();
         for (i, state) in address_state.iter().enumerate() {
-            match state {
-                AddressState::Unknown => {
-                    if rom[i] != 0xff {
-                        let instruction = cpu.decode(&ctx, i as u32);
-                        if let Some(addr) = instruction.addr() {
-                            if matches!(address_state[addr as usize], AddressState::Unknown) {
-                                if addr > 0x100 && rom[addr as usize] != 0xff {
-                                    if matches!(
-                                        instruction.mnemonic(),
-                                        Opcode::ACALL | Opcode::LCALL | Opcode::LJMP | Opcode::AJMP
-                                    ) {
-                                        unknown_calls
-                                            .entry(addr)
-                                            .or_insert(vec![])
-                                            .push(instruction);
-                                    }
-                                }
-                            }
+            if let AddressState::Unknown = state {
+                if rom[i] != 0xff {
+                    let instruction = cpu.decode(&ctx, i as u32);
+                    if let Some(addr) = instruction.addr() {
+                        if matches!(address_state[addr as usize], AddressState::Unknown)
+                            && addr > 0x100
+                            && rom[addr as usize] != 0xff
+                            && matches!(
+                                instruction.mnemonic(),
+                                Opcode::ACALL | Opcode::LCALL | Opcode::LJMP | Opcode::AJMP
+                            )
+                        {
+                            unknown_calls
+                                .entry(addr)
+                                .or_insert(vec![])
+                                .push(instruction);
                         }
                     }
                 }
-                _ => {}
             }
         }
 
@@ -314,7 +312,7 @@ fn disassemble(rom: &[u8], output: &Path, debug: bool) -> io::Result<()> {
             if count > 5 {
                 println!("Unknown call to {addr:04X} ({count} times):");
                 for instruction in instructions {
-                    println!("  {:#}", instruction);
+                    println!("  {instruction:#}");
                 }
                 roots.push((Flow::Root, *addr, *addr));
             }
@@ -331,11 +329,10 @@ fn disassemble(rom: &[u8], output: &Path, debug: bool) -> io::Result<()> {
                     && (window[3] == 0x82 || window[3] == 0x83)
                     && window[4] == 0x90
             })
-            .filter(|(pc, _)| matches!(address_state[*pc as usize], AddressState::Unknown))
+            .filter(|(pc, _)| matches!(address_state[*pc], AddressState::Unknown))
         {
             println!(
-                "Root: common code pattern (PUSH DPx, PUSH DPx, MOV DPTR) at 0x{:04X}: {:04X?}",
-                pc, window
+                "Root: common code pattern (PUSH DPx, PUSH DPx, MOV DPTR) at 0x{pc:04X}: {window:04X?}"
             );
             roots.push((Flow::Root, pc as u16, pc as u16));
         }
@@ -351,11 +348,10 @@ fn disassemble(rom: &[u8], output: &Path, debug: bool) -> io::Result<()> {
                     && (window[3] == 0x82 || window[3] == 0x83)
                     && window[4] == 0x90
             })
-            .filter(|(pc, _)| matches!(address_state[*pc as usize], AddressState::Unknown))
+            .filter(|(pc, _)| matches!(address_state[*pc], AddressState::Unknown))
         {
             println!(
-                "Root: common code pattern (PUSH DPx, PUSH DPx, MOV DPTR) at 0x{:04X}: {:02X?}",
-                pc, window
+                "Root: common code pattern (PUSH DPx, PUSH DPx, MOV DPTR) at 0x{pc:04X}: {window:02X?}"
             );
             roots.push((Flow::Root, pc as u16, pc as u16));
         }
@@ -365,11 +361,10 @@ fn disassemble(rom: &[u8], output: &Path, debug: bool) -> io::Result<()> {
             .windows(4)
             .enumerate()
             .filter(|(_, window)| window[0] == 0x90 && window[1] == 0x7f && window[3] == 0xe0)
-            .filter(|(pc, _)| matches!(address_state[*pc as usize], AddressState::Unknown))
+            .filter(|(pc, _)| matches!(address_state[*pc], AddressState::Unknown))
         {
             println!(
-                "Root: common code pattern (MOV DPTR, 0x7fxx, MOVX A, @DPTR) at 0x{:04X}: {:02X?}",
-                pc, window
+                "Root: common code pattern (MOV DPTR, 0x7fxx, MOVX A, @DPTR) at 0x{pc:04X}: {window:02X?}"
             );
             roots.push((Flow::Root, pc as u16, pc as u16));
         }
@@ -399,7 +394,7 @@ fn disassemble(rom: &[u8], output: &Path, debug: bool) -> io::Result<()> {
                 } else if root {
                     writeln!(file, "root_{pc:04X}:")?;
                 }
-                writeln!(file, "  {}", instruction)?;
+                writeln!(file, "  {instruction}")?;
                 pc = pc.wrapping_add(instruction.len() as u16);
             }
             _ => {}

@@ -1,6 +1,6 @@
 use std::{
     sync::{Arc, Mutex},
-    task::{Context, Poll},
+    task::Context,
 };
 
 use crate::server::WakerHandle;

@@ -7,7 +7,7 @@ use i8051::sfr::SFR_P2;
 use i8051::sfr::SFR_P3;
 use i8051::{CpuView, MemoryMapper, PortMapper, ReadOnlyMemoryMapper};
 use tracing::debug;
-use tracing::{info, trace};
+use tracing::trace;
 
 use crate::machine::generic::duart::{DUART, ReadRegister, WriteRegister};
 use crate::machine::generic::nvr::Nvr;
@@ -272,7 +272,7 @@ impl RAM {
         self.duart.input_bits = self.duart.input_bits & !(1 << 4) | (nvrrdy as u8) << 4;
         self.duart.input_bits = self.duart.input_bits & !(1 << 3) | (nvrrxd as u8) << 3;
 
-        let int1 = self.duart.tick();
+        self.duart.tick();
     }
 }
 
@@ -308,21 +308,21 @@ impl MemoryMapper for RAM {
                     addr, self.peripheral[offset as usize], pc
                 );
                 // peripheral
-                return self.peripheral[offset as usize];
+                self.peripheral[offset as usize]
             }
             MemoryTarget::VRAM => {
                 trace!(
                     "VRAM read: 0x{:04X} = 0x{:02X} @ {:05X}",
                     addr, self.vram[offset as usize], pc
                 );
-                return self.vram[offset as usize];
+                self.vram[offset as usize]
             }
             MemoryTarget::SRAM => {
                 trace!(
                     "SRAM read: 0x{:04X} = 0x{:02X} @ {:05X}",
                     addr, self.sram[offset as usize], pc
                 );
-                return self.sram[offset as usize];
+                self.sram[offset as usize]
             }
         }
     }
@@ -440,7 +440,7 @@ impl ROM {
                 if window[0] == 0x74 && window[2] == 0x02 && window[3] == 0x00 {
                     let a = window[1];
                     let b = window[4];
-                    let target = 0x100 as usize + (2 * a as usize);
+                    let target = 0x100_usize + (2 * a as usize);
 
                     let hi = other[target + 1];
                     let lo = other[target];
