@@ -22,9 +22,10 @@ use crate::host::comm::CommSession;
 use crate::host::comm::connect_duart;
 use crate::machine::TerminalSystem;
 use crate::machine::generic::duart::DUART;
+use crate::machine::generic::rom::ROM;
 use lk201::LK201;
 
-use self::memory::{Bank, DiagnosticMonitor, RAM, ROM, VideoProcessor};
+use self::memory::{DiagnosticMonitor, RAM, VideoProcessor};
 
 #[cfg(feature = "pc-trace")]
 use bit_set::BitSet;
@@ -33,7 +34,6 @@ pub(crate) struct System {
     pub rom: ROM,
     pub memory: RAM,
     pub instruction_count: usize,
-    bank: Bank,
     nvr_file: Option<PathBuf>,
     nvr_write: usize,
 
@@ -70,7 +70,6 @@ impl System {
         comm1: Option<SessionConfig>,
         comm2: Option<SessionConfig>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let bank = Bank::default();
         info!("Loading ROM into memory...");
         let rom = ROM::new(rom);
 
@@ -97,7 +96,7 @@ impl System {
 
         let comm_b = connect_duart(channel_b, comm2.unwrap_or_default())?;
 
-        let mut memory = RAM::new(bank.bank.clone(), video_row.sync.clone(), duart);
+        let mut memory = RAM::new(rom.bank.clone(), video_row.sync.clone(), duart);
         let mut nvr_file = None;
         info!("Configuring NVR...");
         if let Some(nvr) = nvr {
@@ -136,7 +135,6 @@ impl System {
 
         Ok(Self {
             instruction_count: 0,
-            bank,
             memory,
             rom,
             nvr_file,
@@ -317,8 +315,8 @@ impl PortMapper for System {
         )
             .extend_short_read(cpu, addr)
     }
-    fn pc_extension<C: CpuView>(&self, cpu: &C) -> u16 {
-        self.bank.pc_extension(cpu)
+    fn pc_extension<C: CpuView>(&self, _cpu: &C) -> u16 {
+        self.rom.bank.get() as u16
     }
     fn read_latch<C: CpuView>(&self, cpu: &C, addr: u8) -> u8 {
         (

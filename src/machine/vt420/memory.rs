@@ -11,39 +11,9 @@ use tracing::trace;
 
 use crate::machine::generic::duart::{DUART, ReadRegister, WriteRegister};
 use crate::machine::generic::nvr::Nvr;
+use crate::machine::generic::rom::ROM;
 use crate::machine::generic::vsync::SyncGen;
 use crate::machine::vt420::video::{Mapper, TIMING_60HZ, TIMING_70HZ};
-
-pub struct Bank {
-    pub bank: Rc<Cell<bool>>,
-}
-
-impl Default for Bank {
-    fn default() -> Self {
-        Self {
-            bank: Rc::new(Cell::new(false)),
-        }
-    }
-}
-
-impl PortMapper for Bank {
-    type WriteValue = ();
-    fn interest<C: CpuView>(&self, cpu: &C, addr: u8) -> bool {
-        false
-    }
-    fn pc_extension<C: CpuView>(&self, cpu: &C) -> u16 {
-        self.bank.get() as u16
-    }
-    fn read<C: CpuView>(&self, cpu: &C, addr: u8) -> u8 {
-        unimplemented!()
-    }
-    fn prepare_write<C: CpuView>(&self, cpu: &C, addr: u8, value: u8) -> Self::WriteValue {
-        unimplemented!()
-    }
-    fn write(&mut self, value: Self::WriteValue) {
-        unimplemented!()
-    }
-}
 
 #[derive(Clone, Debug)]
 pub struct SyncHolder {
@@ -189,14 +159,14 @@ pub struct RAM {
     pub vram: Box<[u8; 0x20000]>, // 128kB
     pub mapper: Mapper,
     pub peripheral: [u8; 0x100],
-    pub rom_bank: Rc<Cell<bool>>,
+    pub rom_bank: Rc<Cell<u8>>,
     pub sync: SyncHolder,
     pub nvr: Nvr,
     pub duart: DUART,
 }
 
 impl RAM {
-    pub fn new(rom_bank: Rc<Cell<bool>>, sync: SyncHolder, duart: DUART) -> Self {
+    pub fn new(rom_bank: Rc<Cell<u8>>, sync: SyncHolder, duart: DUART) -> Self {
         let sram = Box::new([0; 0x8000]);
         let vram = Box::new([0; 0x20000]);
         let mapper = Mapper::new();
@@ -352,7 +322,7 @@ impl MemoryMapper for RAM {
 
                 if offset == 0x5 {
                     debug!("Memory mapper bank write: {:02X}", value);
-                    let bank = (value & 0x4) != 0;
+                    let bank = ((value & 0x4) != 0) as u8;
                     if bank != self.rom_bank.get() {
                         debug!("RAM write bank changed: {}", bank as u8);
                         self.rom_bank.set(bank);
@@ -393,80 +363,36 @@ pub struct BankDispatch {
     pub target_addr: u32,
 }
 
-/// Memory mapper for the VT420 emulator
-/// Handles RAM and banked ROM memory regions
-pub struct ROM {
-    /// ROM data (loaded into memory)
-    rom: Vec<u8>,
-    /// ROM size in bytes
-    rom_size: usize,
-    /// Bank size (64KB per bank)
-    bank_size: usize,
-}
+pub fn find_bank_dispatch(rom: &ROM) -> Vec<BankDispatch> {
+    const BANK_SEARCH_LENGTH: usize = 0x250;
+    let banks = rom.banks().collect::<Vec<_>>();
 
-impl ROM {
-    /// Create a new memory mapper with ROM loaded from file
-    /// Bank 0: first 64KB of ROM, Bank 1: remaining ROM data
-    /// Initializes with bank 0 mapped
-    pub fn new(rom: Vec<u8>) -> Self {
-        let rom_size = rom.len();
-        let bank_size = 0x10000; // 64KB per bank
+    // Search for 74 <a> 02 00 <b>
+    // Address from other bank is at 0x100 + (2 * <a>)
 
-        Self {
-            rom,
-            rom_size,
-            bank_size,
-        }
-    }
+    let mut dispatches = Vec::new();
 
-    pub fn banks(&self) -> impl Iterator<Item = &[u8]> {
-        self.rom.chunks(self.bank_size)
-    }
+    for (offset, bank, other_offset, other) in [
+        (0, banks[0], 0x10000, banks[1]),
+        (0x10000, banks[1], 0, banks[0]),
+    ] {
+        for (dispatch_addr, window) in bank[..BANK_SEARCH_LENGTH].windows(5).enumerate() {
+            if window[0] == 0x74 && window[2] == 0x02 && window[3] == 0x00 {
+                let a = window[1];
+                let b = window[4];
+                let target = 0x100_usize + (2 * a as usize);
 
-    pub fn find_bank_dispatch(&self) -> Vec<BankDispatch> {
-        const BANK_SEARCH_LENGTH: usize = 0x250;
-        let banks = self.banks().collect::<Vec<_>>();
-
-        // Search for 74 <a> 02 00 <b>
-        // Address from other bank is at 0x100 + (2 * <a>)
-
-        let mut dispatches = Vec::new();
-
-        for (offset, bank, other_offset, other) in [
-            (0, banks[0], 0x10000, banks[1]),
-            (0x10000, banks[1], 0, banks[0]),
-        ] {
-            for (dispatch_addr, window) in bank[..BANK_SEARCH_LENGTH].windows(5).enumerate() {
-                if window[0] == 0x74 && window[2] == 0x02 && window[3] == 0x00 {
-                    let a = window[1];
-                    let b = window[4];
-                    let target = 0x100_usize + (2 * a as usize);
-
-                    let hi = other[target + 1];
-                    let lo = other[target];
-                    let addr = (hi as u16) << 8 | lo as u16;
-                    dispatches.push(BankDispatch {
-                        id: a,
-                        dispatch_addr: dispatch_addr as u32 + offset as u32,
-                        target_addr: addr as u32 + other_offset as u32,
-                    });
-                }
+                let hi = other[target + 1];
+                let lo = other[target];
+                let addr = (hi as u16) << 8 | lo as u16;
+                dispatches.push(BankDispatch {
+                    id: a,
+                    dispatch_addr: dispatch_addr as u32 + offset as u32,
+                    target_addr: addr as u32 + other_offset as u32,
+                });
             }
         }
-
-        dispatches
-    }
-}
-
-impl ReadOnlyMemoryMapper for ROM {
-    fn read<C: CpuView>(&self, cpu: &C, addr: u32) -> u8 {
-        if addr >= self.rom_size as u32 {
-            return 0xFF;
-        }
-        self.rom[addr as usize]
     }
 
-    fn len(&self) -> u32 {
-        self.rom_size as u32
-    }
+    dispatches
 }
