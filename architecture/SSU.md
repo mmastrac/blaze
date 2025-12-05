@@ -1,4 +1,4 @@
-# DEC SSU (Session Setup Utility) Protocol
+# DEC SSU (Session Support Utility) Protocol
 
 a.k.a. DEC TD/SMP: Terminal Device/Session Management Protocol
 (<https://en.wikipedia.org/wiki/TD/SMP>).
@@ -71,8 +71,10 @@ the selected session. To send a command to the remote side, send the intro byte
 (`0x14`, a.k.a. `DC4`) followed by the opcode, parameters, and the term byte
 (`0x1C`).
 
-> "DC4 (0x14): Introduces an SSU session management command. The VT420 and host use this
-> control to separate SSU commands from ANSI text and control functions" -- <https://manx-docs.org/collections/mds-199909/cd3/term/vt420rm2.pdf>
+> "DC4 (0x14): Introduces an SSU session management command. The VT420 and host
+> use this control to separate SSU commands from ANSI text and control
+> functions" --
+> <https://manx-docs.org/collections/mds-199909/cd3/term/vt420rm2.pdf>
 
 If a raw `0x14` is supposed to be sent, it is encoded as `0x14` `T` instead. XON
 and XOFF to be sent to a session are similarily encoded as `0x14` `Q` and `0x14`

@@ -166,7 +166,6 @@ Output:
 
  - 0x0000-0x00ff: Row layout for screen
 
-
 ## Video RAM
 
  - 0x00, 0x01 ...: Per-row data
