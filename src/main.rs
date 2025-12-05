@@ -11,10 +11,9 @@ use std::time::Instant;
 mod host;
 mod machine;
 
-use machine::vt420::System;
-use machine::vt420::breakpoints::create_breakpoints;
-
 use i8051::Cpu;
+
+use crate::machine::System;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 enum Display {
@@ -27,6 +26,15 @@ enum Display {
     /// Display the video output in a graphical UI.
     #[cfg(feature = "graphics")]
     Graphics,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum MachineType {
+    /// VT420
+    #[default]
+    VT420,
+    /// VT520 or VT525
+    VT52x,
 }
 
 /// VT420 Terminal Emulator
@@ -88,6 +96,10 @@ struct Args {
     /// Run the benchmark mode to see how many cycles we can hit
     #[arg(long, conflicts_with = "display")]
     benchmark: bool,
+
+    /// Machine type
+    #[arg(long, default_value = "vt420")]
+    machine: MachineType,
 }
 
 fn parse_hex_address(s: &str) -> Result<u32, Box<dyn std::error::Error + Send + Sync>> {
@@ -134,7 +146,7 @@ fn start() {
     config.set_max_level(Level::INFO);
     tracing_wasm::set_as_global_default_with_config(config.build());
 
-    if let Err(e) = run(
+    if let Err(e) = run_vt420(
         Args {
             display: Some(Display::Graphics),
             ..Default::default()
@@ -162,17 +174,26 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         trace_collector.clone(),
     );
 
-    run(
-        args,
-        #[cfg(feature = "tui")]
-        trace_collector,
-    )
+    match args.machine {
+        MachineType::VT420 => run_vt420(
+            args,
+            #[cfg(feature = "tui")]
+            trace_collector,
+        ),
+        MachineType::VT52x => run_vt52x(
+            args,
+            #[cfg(feature = "tui")]
+            trace_collector,
+        ),
+    }
 }
 
-fn run(
+fn run_vt420(
     args: Args,
     #[cfg(feature = "tui")] trace_collector: TracingCollector,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use machine::vt420::breakpoints::create_breakpoints;
+
     info!("VT420 Emulator starting...");
 
     #[cfg(not(feature = "embed-rom"))]
@@ -207,11 +228,12 @@ fn run(
 
     info!("Configuring system...");
 
-    let mut system = System::new(rom, args.nvr.as_deref(), args.comm1, args.comm2)?;
+    let vt420 = machine::vt420::System::new(rom, args.nvr.as_deref(), args.comm1, args.comm2)?;
+    let mut system = System::new(vt420);
 
-    let breakpoints = &mut system.breakpoints;
+    let breakpoints = &mut system.system.breakpoints;
     if args.log {
-        create_breakpoints(breakpoints, &system.rom);
+        create_breakpoints(breakpoints, &system.system.rom);
     }
 
     info!("Starting CPU execution...");
@@ -245,12 +267,16 @@ fn run(
                 debugger,
             )?,
             #[cfg(feature = "tui")]
-            Display::Text => {
-                host::screen::ratatui::run(system, cpu, debugger, args.show_mapper, args.show_vram)?
-            }
+            Display::Text => host::screen::ratatui::run(
+                system.system,
+                cpu,
+                debugger,
+                args.show_mapper,
+                args.show_vram,
+            )?,
             #[cfg(feature = "graphics")]
             Display::Graphics => host::screen::framebuffer::run(
-                system,
+                system.system,
                 cpu,
                 #[cfg(feature = "tui")]
                 debugger,
@@ -272,6 +298,86 @@ fn run(
     }
 
     println!("VT420 emulator execution completed!");
+
+    Ok(())
+}
+
+fn run_vt52x(
+    args: Args,
+    #[cfg(feature = "tui")] trace_collector: TracingCollector,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    info!("VT52x Emulator starting...");
+
+    #[cfg(not(feature = "embed-rom"))]
+    let rom = {
+        use std::fs;
+        info!("Loading ROM file: {:?}...", args.rom);
+
+        // Check if ROM file exists
+        if !args.rom.exists() {
+            info!("Error: ROM file does not exist: {:?}", args.rom);
+            std::process::exit(1);
+        }
+
+        fs::read(&args.rom)?
+    };
+
+    #[cfg(feature = "embed-rom")]
+    let mut rom = { include_bytes!("../roms/vt520/23-010ED-00.bin").to_vec() };
+    #[cfg(feature = "embed-rom")]
+    if let Some(rom_path) = args.rom {
+        use std::fs;
+        info!("Loading ROM file: {:?}...", rom_path);
+
+        // Check if ROM file exists
+        if !rom_path.exists() {
+            info!("Error: ROM file does not exist: {:?}", rom_path);
+            std::process::exit(1);
+        }
+
+        rom = fs::read(&rom_path)?;
+    };
+
+    info!("Configuring system...");
+
+    let vt52x = machine::vt52x::System::new(rom, args.nvr.as_deref(), args.comm1, args.comm2)?;
+    let mut system = System::new(vt52x);
+
+    info!("Starting CPU execution...");
+    let mut cpu = Cpu::new();
+    #[cfg(not(target_arch = "wasm32"))]
+    let start_time = Instant::now();
+    info!("CPU initialized, PC = 0x{:04X}", cpu.pc_ext(&system));
+
+    #[cfg(feature = "tui")]
+    let debugger = if args.debug {
+        let mut debugger = Debugger::new(Default::default(), trace_collector)?;
+        for breakpoint in args.breakpoint {
+            debugger.breakpoints_mut().insert(breakpoint);
+        }
+        Some(debugger)
+    } else {
+        None
+    };
+
+    let instruction_count = if args.benchmark {
+        for _ in 0..100_000_000 {
+            system.step(&mut cpu);
+        }
+        system.instruction_count
+    } else {
+        match args.display.unwrap_or(Display::Headless) {
+            Display::Headless => host::screen::headless::run(
+                system,
+                cpu,
+                #[cfg(feature = "tui")]
+                debugger,
+            )?,
+            _ => {
+                unimplemented!()
+            }
+        }
+    };
 
     Ok(())
 }

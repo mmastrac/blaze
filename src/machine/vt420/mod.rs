@@ -20,6 +20,7 @@ use tracing::{info, trace, warn};
 
 use crate::host::comm::CommSession;
 use crate::host::comm::connect_duart;
+use crate::machine::TerminalSystem;
 use crate::machine::generic::duart::DUART;
 use lk201::LK201;
 
@@ -53,6 +54,13 @@ pub(crate) struct System {
     pub(crate) pc_bitset: BitSet,
     #[cfg(feature = "pc-trace")]
     pub(crate) pc_bitset_current: BitSet,
+}
+
+impl TerminalSystem for System {
+    #[inline]
+    fn step(&mut self, cpu: &mut Cpu) {
+        self.step(cpu);
+    }
 }
 
 impl System {

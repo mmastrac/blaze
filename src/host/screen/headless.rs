@@ -4,10 +4,10 @@ use i8051::Cpu;
 #[cfg(feature = "tui")]
 use i8051_debug_tui::Debugger;
 
-use crate::System;
+use crate::machine::{System, TerminalSystem};
 
-pub fn run(
-    mut system: System,
+pub fn run<S: TerminalSystem>(
+    mut system: System<S>,
     mut cpu: Cpu,
     #[cfg(feature = "tui")] debugger: Option<Debugger>,
 ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
@@ -33,7 +33,7 @@ pub fn run(
                 }
                 DebuggerState::Running => {
                     if system.instruction_count % 0x10000 == 0 {
-                        debugger.render(&cpu, &mut system)?;
+                        debugger.render(&cpu, &mut system.system)?;
                         let event = crossterm::event::poll(Duration::from_millis(0))?;
                         if event {
                             let event = crossterm::event::read()?;

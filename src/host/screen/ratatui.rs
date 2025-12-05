@@ -18,8 +18,8 @@ use tracing::warn;
 
 use crate::host::lk201::crossterm::{CrosstermKeyboard, KeyboardCommand};
 use crate::host::screen::unicode;
-use crate::machine::vt420::video::{RowFlags, decode_vram};
-use crate::{System, machine::vt420::video::Mapper};
+use crate::machine::vt420::System;
+use crate::machine::vt420::video::{Mapper, RowFlags, decode_vram};
 
 pub struct Screen<'a> {
     vram: &'a [u8],

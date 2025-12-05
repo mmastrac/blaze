@@ -12,11 +12,8 @@ use ratatui::crossterm::event::KeyModifiers;
 use tracing::info;
 
 use crate::machine::generic::color::DEFAULT_COLOR;
-use crate::machine::vt420::video::decode_font_downloadable;
-use crate::{
-    System,
-    machine::vt420::video::{RowFlags, decode_font, decode_vram},
-};
+use crate::machine::vt420::System;
+use crate::machine::vt420::video::{RowFlags, decode_font, decode_font_downloadable, decode_vram};
 
 /// Renderer for RGBA framebuffers.
 #[derive(Default)]
