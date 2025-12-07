@@ -25,7 +25,7 @@ use crate::machine::generic::duart::DUART;
 use crate::machine::generic::rom::ROM;
 use lk201::LK201;
 
-use self::memory::{DiagnosticMonitor, RAM, VideoProcessor};
+use self::memory::{DiagnosticMonitor, Ports, RAM};
 
 #[cfg(feature = "pc-trace")]
 use bit_set::BitSet;
@@ -37,7 +37,7 @@ pub(crate) struct System {
     nvr_file: Option<PathBuf>,
     nvr_write: usize,
 
-    video_row: VideoProcessor,
+    video_row: Ports,
     serial: Serial,
     diagnostic_monitor: DiagnosticMonitor,
     timer: Timer,
@@ -74,7 +74,7 @@ impl System {
         let rom = ROM::new(rom);
 
         info!("Configuring video processor...");
-        let video_row = VideoProcessor::new();
+        let video_row = Ports::new();
         info!("Configuring keyboard...");
         let (serial, in_kbd, out_kbd) = Serial::new(60);
 
@@ -259,7 +259,7 @@ impl System {
 
 impl PortMapper for System {
     type WriteValue = <(
-        VideoProcessor,
+        Ports,
         (Serial, (DiagnosticMonitor, (Timer, DefaultPortMapper))),
     ) as PortMapper>::WriteValue;
     fn interest<C: CpuView>(&self, cpu: &C, addr: u8) -> bool {

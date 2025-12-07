@@ -2,23 +2,24 @@ use std::path::Path;
 use std::sync::mpsc;
 
 use i8051::peripheral::Serial;
-use i8051::sfr::SFR_P1;
-use i8051::{Cpu, CpuContext, CpuView, PortMapper};
+use i8051::{Cpu, CpuContext, CpuView, DefaultPortMapper, PortMapper};
 use ssu::session::SessionConfig;
 
 use crate::machine::TerminalSystem;
-use crate::machine::vt52x::memory::{Bank, RAM, ROM};
+use crate::machine::generic::rom::ROM;
+use crate::machine::vt52x::memory::{Ports, RAM};
 
 mod memory;
 
 pub struct System {
     pub memory: RAM,
     pub rom: ROM,
-    pub bank: Bank,
 
     serial: Serial,
+    default: DefaultPortMapper,
     in_kbd: mpsc::Sender<u8>,
     out_kbd: mpsc::Receiver<u8>,
+    ports: Ports,
 }
 
 impl System {
@@ -29,14 +30,17 @@ impl System {
         comm2: Option<SessionConfig>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let (serial, in_kbd, out_kbd) = Serial::new(60);
+        let rom = ROM::new(rom);
+        let ports = Ports::new(rom.bank.clone());
 
         Ok(Self {
             memory: Default::default(),
-            rom: ROM::new(rom),
-            bank: Default::default(),
+            rom,
             serial,
+            default: Default::default(),
             in_kbd,
             out_kbd,
+            ports,
         })
     }
 
@@ -82,38 +86,24 @@ impl CpuContext for System {
 }
 
 impl PortMapper for System {
-    type WriteValue = (u8, u8);
+    type WriteValue = <(Ports, (Serial, DefaultPortMapper)) as PortMapper>::WriteValue;
     fn interest<C: CpuView>(&self, cpu: &C, addr: u8) -> bool {
-        addr == SFR_P1
+        (&self.ports, (&self.serial, &self.default)).interest(cpu, addr)
     }
-    fn pc_extension<C: CpuView>(&self, cpu: &C) -> u16 {
-        self.bank.pc_extension(cpu)
+    fn pc_extension<C: CpuView>(&self, _cpu: &C) -> u16 {
+        self.rom.bank.get() as u16
     }
     fn read<C: CpuView>(&self, cpu: &C, addr: u8) -> u8 {
-        0
+        (&self.ports, (&self.serial, &self.default)).read(cpu, addr)
     }
     fn read_latch<C: CpuView>(&self, cpu: &C, addr: u8) -> u8 {
-        match addr {
-            SFR_P1 => self.bank.bank.get() << 4,
-            _ => 0,
-        }
+        (&self.ports, (&self.serial, &self.default)).read_latch(cpu, addr)
     }
     fn prepare_write<C: CpuView>(&self, cpu: &C, addr: u8, value: u8) -> Self::WriteValue {
-        (addr, value)
+        (&self.ports, (&self.serial, &self.default)).prepare_write(cpu, addr, value)
     }
-    fn write(&mut self, (addr, value): Self::WriteValue) {
-        match addr {
-            SFR_P1 => {
-                // P1.4/P1.5/P1.6
-                let p1_4 = (value & (1 << 4)) != 0;
-                let p1_5 = (value & (1 << 5)) != 0;
-                let p1_6 = (value & (1 << 6)) != 0;
-
-                let bank = p1_4 as u8 | ((p1_5 as u8) << 1) | ((p1_6 as u8) << 2);
-                self.bank.bank.set(bank);
-            }
-            _ => {}
-        }
+    fn write(&mut self, value: Self::WriteValue) {
+        (&mut self.ports, (&mut self.serial, &mut self.default)).write(value)
     }
 }
 

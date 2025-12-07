@@ -5,7 +5,7 @@ use std::rc::Rc;
 use i8051::sfr::SFR_P1;
 use i8051::sfr::SFR_P2;
 use i8051::sfr::SFR_P3;
-use i8051::{CpuView, MemoryMapper, PortMapper, ReadOnlyMemoryMapper};
+use i8051::{CpuView, MemoryMapper, PortMapper};
 use tracing::debug;
 use tracing::trace;
 
@@ -39,7 +39,7 @@ impl Default for SyncHolder {
     }
 }
 
-pub struct VideoProcessor {
+pub struct Ports {
     pub p1: u8,
     pub p1_read: u8,
     pub p2: u8,
@@ -48,7 +48,7 @@ pub struct VideoProcessor {
     pub sync: SyncHolder,
 }
 
-impl VideoProcessor {
+impl Ports {
     pub fn new() -> Self {
         Self {
             p1: 0b1111_1111,
@@ -75,7 +75,7 @@ impl VideoProcessor {
     }
 }
 
-impl PortMapper for VideoProcessor {
+impl PortMapper for Ports {
     type WriteValue = (u8, u8);
     fn interest<C: CpuView>(&self, cpu: &C, addr: u8) -> bool {
         addr == SFR_P2 || addr == SFR_P3 || addr == SFR_P1
