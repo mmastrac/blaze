@@ -15,7 +15,7 @@ impl MemoryMapper for RAM {
     }
     fn read<C: CpuView>(&self, cpu: &C, addr: u32) -> u8 {
         trace!("RAM read {:02X} @ {:X}", addr, cpu.pc_ext());
-        if addr == 0x7FFB && cpu.pc_ext() != 0x71BA7 {
+        if addr == 0x7FFB {
             0
         } else {
             0xFF
@@ -87,10 +87,10 @@ impl PortMapper for Ports {
     fn write(&mut self, (addr, value): Self::WriteValue) {
         match addr {
             SFR_P1 => {
-                let p1_4 = (value & (1 << 4)) != 0;
                 let p1_5 = (value & (1 << 5)) != 0;
                 let p1_6 = (value & (1 << 6)) != 0;
-                let bank = p1_4 as u8 | ((p1_5 as u8) << 1) | ((p1_6 as u8) << 2);
+                let p1_7 = (value & (1 << 7)) != 0;
+                let bank = p1_7 as u8 | ((p1_6 as u8) << 1) | ((p1_5 as u8) << 2);
                 self.rom_bank.set(bank);
                 self.p1 = value;
             }
