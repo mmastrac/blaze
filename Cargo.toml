@@ -26,7 +26,7 @@ tracing-subscriber = "0.3.20"
 hex-literal = "1.1"
 bit-set = "0.8"
 lk201 = { path = "crates/lk201" }
-ssu = { path = "crates/ssu", no-default-features = true, features = ["session-config"] }
+ssu = { path = "crates/ssu", default-features = false, features = ["session-config"] }
 
 # features=vram-dump
 png = { version = "0.18", optional = true }
@@ -48,13 +48,16 @@ vt-push-parser = { version = "0.11.0", optional = true }
 [dev-dependencies]
 tempfile = "3.23"
 rstest = "0.26"
+axum = "0.8.7"
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["fs"] }
 
 [profile.release]
 debug = true
 
 [features]
 default = ["graphics", "tui", "pty", "demo", "vram-dump"]
-wasm = ["graphics", "embed-rom"]
+wasm = ["graphics", "embed-rom", "ssu/wasm"]
 pc-trace = []
 pty = ["ssu/pty"]
 tui = ["dep:ratatui", "ratatui/crossterm", "dep:i8051-debug-tui"]
@@ -70,7 +73,7 @@ console_error_panic_hook = { version = "0.1.7" }
 tracing-wasm = { version = "0.2.1" }
 wasm-bindgen = { version = "0.2.105" }
 wasm-bindgen-futures = { version = "0.4.46" }
-web-sys = { version = "0.3.82", features = ["GpuTextureFormat", "Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement", "Event", "CssStyleDeclaration", "Navigator", "Gpu"] }
+web-sys = { version = "0.3.82", features = ["GpuTextureFormat", "Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement", "Event", "CssStyleDeclaration", "Navigator", "Gpu", "Location"] }
 js-sys = { version = "0.3.82", features = [] }
 
 [[example]]
@@ -78,4 +81,8 @@ name = "disassemble-rom"
 
 [[example]]
 name = "run-wasm"
+required-features = ["run-wasm"]
+
+[[example]]
+name = "wasm-examples"
 required-features = ["run-wasm"]

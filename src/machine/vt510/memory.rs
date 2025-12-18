@@ -15,11 +15,7 @@ impl MemoryMapper for RAM {
     }
     fn read<C: CpuView>(&self, cpu: &C, addr: u32) -> u8 {
         trace!("RAM read {:02X} @ {:X}", addr, cpu.pc_ext());
-        if addr == 0x7FFB {
-            0
-        } else {
-            0xFF
-        }
+        if addr == 0x7FFB { 0 } else { 0xFF }
     }
     fn prepare_write<C: CpuView>(&self, cpu: &C, addr: u32, value: u8) -> Self::WriteValue {
         (addr, value)

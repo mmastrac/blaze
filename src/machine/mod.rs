@@ -2,8 +2,8 @@ use i8051::CpuContext;
 
 pub mod generic;
 pub mod vt420;
-pub mod vt52x;
 pub mod vt510;
+pub mod vt52x;
 
 pub trait TerminalSystem: CpuContext {
     fn step(&mut self, cpu: &mut i8051::Cpu);

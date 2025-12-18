@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blaze: VT420 Emulator</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+        }
+        iframe {
+            border: none;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+    </style>
+</head>
+<body>
+    <script src="./index.js"></script>
+    <iframe src="../../wasm/#message-channel" width="100%" height="100%" scrolling="no"></iframe>
+    <script>
+        const iframe = document.querySelector("iframe");
+        iframe.addEventListener("load", function () {
+            window.addEventListener("message", function (event) {
+                if (event.data.type === "ready") {
+                    iframe.contentWindow.postMessage({ type: "ready" }, "*");
+                } else if (event.data.type === "open") {
+                    const port = event.ports[0];
+                    port.onmessage = function (event) {
+                        if (event.data.type === "write") {
+                            js_write(event.data.data);
+                        } else if (event.data.type === "read") {
+                            (async () => {
+                                const data = await js_read();
+                                port.postMessage({ type: "data", data: data.buffer }, [data.buffer]);
+                            })();
+                        } else {
+                            console.warn("unknown message type", event.data.type);
+                        }
+                    };
+                }
+            });
+        });
+    </script>
+</body>
+</html>

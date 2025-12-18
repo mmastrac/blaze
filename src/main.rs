@@ -99,6 +99,10 @@ struct Args {
     #[arg(long, conflicts_with = "display")]
     benchmark: bool,
 
+    /// Skip diagnostics
+    #[arg(long)]
+    skip_diagnostics: bool,
+
     /// Machine type
     #[arg(long, default_value = "vt420")]
     machine: MachineType,
@@ -139,18 +143,44 @@ fn setup_logging(args: &Args, #[cfg(feature = "tui")] trace_collector: TracingCo
 }
 
 #[cfg(target_arch = "wasm32")]
+fn get_hash_param() -> Option<String> {
+    use web_sys::window;
+    window()
+        .map(|window| window.location())
+        .and_then(|location| location.hash().ok())
+        .and_then(|hash| {
+            if let Some(hash) = hash.strip_prefix('#') {
+                Some(hash.replace("%20", " "))
+            } else {
+                None
+            }
+        })
+}
+
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 fn start() {
+    use std::str::FromStr;
     use tracing::error;
+    use web_sys::window;
 
     console_error_panic_hook::set_once();
     let mut config = tracing_wasm::WASMLayerConfigBuilder::new();
     config.set_max_level(Level::INFO);
     tracing_wasm::set_as_global_default_with_config(config.build());
 
+    // If comm1 is set in the window's hash, use it
+    let comm1 = if let Some(comm1) = get_hash_param() {
+        Some(SessionConfig::from_str(&comm1).unwrap())
+    } else {
+        None
+    };
+
     if let Err(e) = run_vt420(
         Args {
             display: Some(Display::Graphics),
+            comm1,
+            skip_diagnostics: true,
             ..Default::default()
         },
         #[cfg(feature = "tui")]
@@ -248,6 +278,13 @@ fn run_vt420(
     #[cfg(not(target_arch = "wasm32"))]
     let start_time = Instant::now();
     info!("CPU initialized, PC = 0x{:04X}", cpu.pc_ext(&system));
+
+    if args.skip_diagnostics {
+        // TODO: This should be more heuristic
+        for _ in 0..0x800_000_u64 {
+            system.step(&mut cpu);
+        }
+    }
 
     #[cfg(feature = "tui")]
     let debugger = if args.debug {

@@ -24,12 +24,19 @@ tokio = { version = "1", features = ["full"], optional = true }
 
 serialport = { version = "4", optional = true }
 
+wasm-bindgen = { version = "0.2", optional = true }
+js-sys = { version = "0.3.82", features = [], optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+
 [features]
 default = []
 session-config = ["dep:clap", "dep:shellish_parse"]
 server = ["dep:clap", "dep:raw_tty", "dep:tokio", "session-config"]
 pty = ["dep:pty-process"]
 serial = ["dep:serialport"]
+wasm = ["dep:wasm-bindgen", "dep:js-sys"]
 
 [[bin]]
 name = "server"

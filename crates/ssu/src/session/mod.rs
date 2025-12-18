@@ -11,6 +11,8 @@ use clap::{CommandFactory, FromArgMatches};
 use crate::session::pty::PtySession;
 #[cfg(feature = "serial")]
 use crate::session::serial::SerialSession;
+#[cfg(feature = "wasm")]
+use crate::session::wasm::WasmSession;
 use crate::session::{
     exec::ExecSession,
     io::{IoSessionReadWrite, boot_io},
@@ -26,6 +28,8 @@ pub mod pipe;
 pub mod pty;
 #[cfg(feature = "serial")]
 pub mod serial;
+#[cfg(feature = "wasm")]
+pub mod wasm;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SerialFlowControl {
@@ -59,6 +63,12 @@ pub enum SessionConfig {
         stop_bits: u8,
         flow_control: Option<SerialFlowControl>,
     },
+    /// Connect to an external JS source on `globalThis`.
+    #[cfg(feature = "wasm")]
+    Wasm { read_fn: String, write_fn: String },
+    /// Connect to the window's message handler.
+    #[cfg(feature = "wasm")]
+    MessageChannel {},
 }
 
 impl Default for SessionConfig {
@@ -68,10 +78,10 @@ impl Default for SessionConfig {
 }
 
 impl SessionConfig {
-    pub fn start(self) -> std::io::Result<Box<dyn SessionEndpoint + Send + 'static>> {
+    pub fn start(self) -> std::io::Result<Box<dyn SessionEndpoint + 'static>> {
         fn boot(
             session: impl IoSessionEndpoint,
-        ) -> std::io::Result<Box<dyn SessionEndpoint + Send + 'static>> {
+        ) -> std::io::Result<Box<dyn SessionEndpoint + 'static>> {
             boot_io(session).map(|io| Box::new(io) as _)
         }
 
@@ -96,6 +106,12 @@ impl SessionConfig {
                 stop_bits,
                 flow_control,
             )),
+            #[cfg(feature = "wasm")]
+            SessionConfig::Wasm { read_fn, write_fn } => {
+                Ok(Box::new(WasmSession::new(read_fn, write_fn)?))
+            }
+            #[cfg(feature = "wasm")]
+            SessionConfig::MessageChannel {} => Ok(Box::new(WasmSession::new_message_channel()?)),
         }
     }
 }
@@ -153,6 +169,10 @@ enum SessionSubcommand {
         )]
         software_flow_control: bool,
     },
+    #[cfg(feature = "wasm")]
+    Wasm { read_fn: String, write_fn: String },
+    #[cfg(feature = "wasm")]
+    MessageChannel {},
 }
 
 impl FromStr for SessionConfig {
@@ -260,10 +280,18 @@ impl FromStr for SessionConfig {
                     }
                 }
             }
+            #[cfg(feature = "wasm")]
+            SessionSubcommand::Wasm { read_fn, write_fn } => {
+                SessionConfig::Wasm { read_fn, write_fn }
+            }
+            #[cfg(feature = "wasm")]
+            SessionSubcommand::MessageChannel {} => SessionConfig::MessageChannel {},
         })
     }
 }
 
+/// Return a result or a "come back later". This will be replaced with `async`
+/// in the future.
 pub enum Ticked {
     /// Byte available.
     Byte(u8),
@@ -284,7 +312,9 @@ pub trait SessionEndpoint {
     ) -> (
         Box<dyn SessionRecvEndpoint + Send + 'static>,
         Box<dyn SessionSendEndpoint + Send + 'static>,
-    );
+    )
+    where
+        Self: Send;
 }
 
 pub trait SessionRecvEndpoint {

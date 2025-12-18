@@ -11,11 +11,13 @@ use ssu::session::pipe::{DualPipeSession, SinglePipeSession};
 use ssu::session::pty::PtySession;
 #[cfg(feature = "serial")]
 use ssu::session::serial::SerialSession;
+#[cfg(feature = "wasm")]
+use ssu::session::wasm::WasmSession;
 use ssu::session::{IoSessionEndpoint, SessionConfig, SessionEndpoint, exec::ExecSession};
 
 use crate::machine::generic::duart::DUARTChannel;
 
-use tracing::error;
+use tracing::{error, info};
 
 pub enum CommSession {
     Tickable(
@@ -23,6 +25,7 @@ pub enum CommSession {
         Receiver<u8>,
         SyncSender<u8>,
         Option<u8>,
+        bool,
     ),
     Io,
 }
@@ -30,31 +33,41 @@ pub enum CommSession {
 impl CommSession {
     pub fn tick(&mut self) {
         match self {
-            CommSession::Tickable(session, rx, tx, pending) => {
-                let b = if let Some(pending) = pending.take() {
-                    Some(pending)
-                } else {
-                    match session.recv() {
-                        Ticked::Byte(byte) => Some(byte),
-                        Ticked::IdleInput => None,
-                        Ticked::Idle => None,
-                    }
-                };
-                if let Some(byte) = b {
-                    match tx.try_send(byte) {
-                        Ok(()) => {}
-                        Err(TrySendError::Full(byte)) => {
-                            pending.replace(byte);
-                        }
-                        Err(TrySendError::Disconnected(_)) => {}
-                    }
-                }
-
+            CommSession::Tickable(session, rx, tx, pending, xon) => {
                 match rx.try_recv() {
+                    Ok(0x11) => {
+                        info!("XON received");
+                        *xon = true;
+                    }
+                    Ok(0x13) => {
+                        info!("XOFF received");
+                        *xon = false;
+                    }
                     Ok(byte) => {
                         session.send(byte);
                     }
                     Err(e) => {}
+                };
+
+                if *xon {
+                    let b = if let Some(pending) = pending.take() {
+                        Some(pending)
+                    } else {
+                        match session.recv() {
+                            Ticked::Byte(byte) => Some(byte),
+                            Ticked::IdleInput => None,
+                            Ticked::Idle => None,
+                        }
+                    };
+                    if let Some(byte) = b {
+                        match tx.try_send(byte) {
+                            Ok(()) => {}
+                            Err(TrySendError::Full(byte)) => {
+                                pending.replace(byte);
+                            }
+                            Err(TrySendError::Disconnected(_)) => {}
+                        }
+                    }
                 }
             }
             CommSession::Io => {}
@@ -139,6 +152,7 @@ pub fn connect_duart(
             channel.rx,
             channel.tx,
             None,
+            false,
         ),
         SessionConfig::Pipe(path) => boot_io(channel, SinglePipeSession::new(path))?,
         SessionConfig::Pipes { rx, tx } => boot_io(channel, DualPipeSession::new(rx, tx))?,
@@ -158,5 +172,21 @@ pub fn connect_duart(
             channel,
             SerialSession::new(path, baud_rate, data_bits, stop_bits, flow_control),
         )?,
+        #[cfg(feature = "wasm")]
+        SessionConfig::Wasm { read_fn, write_fn } => CommSession::Tickable(
+            Box::new(WasmSession::new(read_fn, write_fn)?),
+            channel.rx,
+            channel.tx,
+            None,
+            false,
+        ),
+        #[cfg(feature = "wasm")]
+        SessionConfig::MessageChannel {} => CommSession::Tickable(
+            Box::new(WasmSession::new_message_channel()?),
+            channel.rx,
+            channel.tx,
+            None,
+            false,
+        ),
     })
 }

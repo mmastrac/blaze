@@ -1,0 +1,3 @@
+[submodule "examples/wasm/termtris/termtris"]
+	path = examples/wasm/termtris/termtris
+	url = https://github.com/jtsiomb/termtris
