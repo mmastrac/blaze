@@ -22,22 +22,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.88.0
+          toolchain: 1.92.0
       - name: Install WASM target
         run: rustup target add wasm32-unknown-unknown
+      - name: Build Termtris WASM
+        run: |
+          sudo apt-get install emscripten
+          ./examples/wasm/termtris/build.sh
       - name: Build WASM
-        run: cargo run-wasm --bin blaze-vt --no-default-features --features=wasm,demo --release --build-only
+        run: cargo run --example wasm-examples --features=run-wasm build --out-dir ./target/website/
       - name: List WASM files
-        run: find ./target/wasm-examples/blaze-vt/ -type f
+        run: find ./target/website/ -type f
       - name: Setup Pages
         id: pages
         uses: actions/configure-pages@v5
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./target/wasm-examples/blaze-vt/
+          path: ./target/website/
 
   # Deployment job
   deploy:
@@ -56,4 +63,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-

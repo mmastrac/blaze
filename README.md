@@ -1,13 +1,15 @@
 # Blaze: an emulator for the VT420 terminal
 
-Blaze is an emulator for the VT420 terminal. It is a work in progress and is not
-yet complete.
+Blaze is an emulator for the VT420 terminal.
 
-It is build on top of
-[the i8051 emulator crate](https://crates.io/crates/i8051).
+Try it out in the browser! [https://mmastrac.github.io/blaze-vt/](https://mmastrac.github.io/blaze-vt/)
 
-The emulator includes a debugger and TUI for running the emulator with an
-emulated display and keyboard.
+The emulator includes a graphical mode supporting WGPU and OpenGL, a headless
+mode, and a debugger/TUI for running the emulator with an emulated display and
+keyboard.
+
+Blaze is built on top of [the i8051 emulator
+crate](https://crates.io/crates/i8051).
 
 ## Features
 
@@ -17,7 +19,8 @@ Emulates the VT420 terminal:
 - DC7166B/DC7166C video processor, including:
   - Smooth scrolling
   - Multi-session support
-  - 132-column support
+  - 80/132-column support
+  - Custom fonts
 - 8051 CPU
 - 5911 EEPROM
 - DUART

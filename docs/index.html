@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blaze: a DEC VT420 (and more) Emulator</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background-color: #ffffff;
+            color: #333333;
+            line-height: 1.6;
+            padding: 0;
+            margin: 0;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 60px 20px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 60px;
+        }
+
+        h1 {
+            font-size: 3rem;
+            font-weight: 600;
+            margin-bottom: 24px;
+            color: #1a1a1a;
+        }
+
+        .intro {
+            max-width: 800px;
+            margin: 0 auto 60px;
+            font-size: 1.125rem;
+            color: #555555;
+        }
+
+        .intro p {
+            margin-bottom: 16px;
+        }
+
+        .intro a {
+            color: #0066cc;
+            text-decoration: none;
+            border-bottom: 1px solid transparent;
+            transition: border-color 0.2s ease;
+        }
+
+        .intro a:hover {
+            border-bottom-color: #0066cc;
+        }
+
+        .examples-section {
+            margin-top: 80px;
+        }
+
+        .examples-section h2 {
+            font-size: 2rem;
+            font-weight: 600;
+            margin-bottom: 40px;
+            text-align: center;
+            color: #1a1a1a;
+        }
+
+        .examples-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 30px;
+            margin-top: 40px;
+        }
+
+        example {
+            display: block;
+            background: #ffffff;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            text-decoration: none;
+            color: inherit;
+            cursor: pointer;
+        }
+
+        example:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+        }
+
+        example a {
+            display: block;
+            text-decoration: none;
+            color: inherit;
+            width: 100%;
+            height: 100%;
+        }
+
+        .preview-container {
+            position: relative;
+            width: 100%;
+            padding-top: 75%; /* 4:3 aspect ratio */
+            background-color: #f5f5f5;
+            overflow: hidden;
+        }
+
+        .preview-image {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .play-button-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 64px;
+            height: 64px;
+            background-color: rgba(0, 0, 0, 0.7);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background-color 0.2s ease, transform 0.2s ease;
+            pointer-events: none;
+        }
+
+        example:hover .play-button-overlay {
+            background-color: rgba(0, 0, 0, 0.85);
+            transform: translate(-50%, -50%) scale(1.1);
+        }
+
+        .play-button-overlay::after {
+            content: '';
+            width: 0;
+            height: 0;
+            border-left: 20px solid #ffffff;
+            border-top: 12px solid transparent;
+            border-bottom: 12px solid transparent;
+            margin-left: 4px;
+        }
+
+        .example-content {
+            padding: 24px;
+        }
+
+        example title {
+            display: block;
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #1a1a1a;
+        }
+
+        example description {
+            display: block;
+            font-size: 0.9375rem;
+            color: #666666;
+            line-height: 1.5;
+        }
+
+        @media (max-width: 768px) {
+            h1 {
+                font-size: 2rem;
+            }
+
+            .intro {
+                font-size: 1rem;
+            }
+
+            .examples-grid {
+                grid-template-columns: 1fr;
+                gap: 24px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Blaze: a DEC VT420 (and more) Emulator</h1>
+        </header>
+
+        <div class="intro">
+            <p>
+                Blaze is an emulator for the VT420 terminal.
+            </p>
+            <p>
+                It's built on top of <a href="https://crates.io/crates/i8051" target="_blank" rel="noopener noreferrer">the i8051 emulator crate</a>.
+            </p>
+            <p>
+                Blaze emulates the VT420 terminal including the LK201 keyboard, DC7166B/DC7166C video processor with smooth scrolling, multi-session support, and 132-column support, along with the 8051 CPU, 5911 EEPROM, and DUART.
+            </p>
+        </div>
+
+        <section class="examples-section">
+            <h2>Examples</h2>
+            <div class="examples-grid">
+                <example preview="about:blank">
+                    <a href="examples/termtris/">
+                        <div class="preview-container">
+                            <img src="about:blank" alt="Termtris Preview" class="preview-image">
+                            <div class="play-button-overlay"></div>
+                        </div>
+                        <div class="example-content">
+                            <title>Termtris</title>
+                            <description>A classic Tetris game running in the VT420 emulator, demonstrating terminal graphics and input handling.</description>
+                        </div>
+                    </a>
+                </example>
+
+                <example preview="about:blank">
+                    <a href="examples/helloworld/">
+                        <div class="preview-container">
+                            <img src="about:blank" alt="Hello World Preview" class="preview-image">
+                            <div class="play-button-overlay"></div>
+                        </div>
+                        <div class="example-content">
+                            <title>Hello World</title>
+                            <description>A simple demonstration of basic terminal output and text rendering capabilities.</description>
+                        </div>
+                    </a>
+                </example>
+
+                <!-- <example preview="about:blank">
+                    <a href="examples/example-placeholder/">
+                        <div class="preview-container">
+                            <img src="about:blank" alt="Example Preview" class="preview-image">
+                            <div class="play-button-overlay"></div>
+                        </div>
+                        <div class="example-content">
+                            <title>Example 3</title>
+                            <description>Additional examples and demonstrations will be added here as they become available.</description>
+                        </div>
+                    </a>
+                </example> -->
+            </div>
+        </section>
+    </div>
+</body>
+</html>
