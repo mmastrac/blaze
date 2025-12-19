@@ -69,7 +69,7 @@ impl DemoComm {
             page: 0,
             list_state: ListState::default(),
         };
-        CommSession::Tickable(Box::new(demo_comm), duart.rx, duart.tx, None)
+        CommSession::Tickable(Box::new(demo_comm), duart.rx, duart.tx, None, false)
     }
 }
 
