@@ -2,7 +2,7 @@
 
 Blaze is an emulator for the VT420 terminal.
 
-Try it out in the browser! [https://mmastrac.github.io/blaze-vt/](https://mmastrac.github.io/blaze-vt/)
+Try it out in the browser! [https://mmastrac.github.io/blaze/](https://mmastrac.github.io/blaze/)
 
 The emulator includes a graphical mode supporting WGPU and OpenGL, a headless
 mode, and a debugger/TUI for running the emulator with an emulated display and
