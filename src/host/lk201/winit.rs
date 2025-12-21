@@ -1,4 +1,4 @@
-use game_loop::winit::keyboard::{Key, KeyCode};
+use winit::keyboard::{Key, KeyCode};
 use winit_input_helper::WinitInputHelper;
 
 use lk201::{LK201Sender, SpecialKey};

@@ -137,7 +137,7 @@ impl FramebufferRender {
                 let width = if render.row_flags.is_80 { 10 } else { 6 };
                 let mut offset = render.row_offset;
                 for mut y in 0..render.row_flags.row_height as usize {
-                    if render.row + y >= crate::host::wgpu::WIDTH as _ {
+                    if render.row + y >= crate::host::wgpu::REAL_WIDTH as _ {
                         break;
                     }
                     if c == 0 && !render.row_flags.is_80 {
