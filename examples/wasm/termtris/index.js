@@ -1,12 +1,15 @@
 const TICK_INTERVAL = 52;
+const BUFFER_HIGH_WATER_MARK = 256;
 
 class Termtris {
     _readQueue = [];
+    _readBufferSize = 0;
     _readWaker = null;
     _approxTime = 0;
     _nextTime = 0;
     _wasmInstance = null;
     _startTime;
+    _missedTicks = 0;
 
     constructor() {
         this._startTime = Date.now();
@@ -16,11 +19,14 @@ class Termtris {
     _tick() {
         this._approxTime = Date.now() - this._startTime;
         if (this._wasmInstance !== null) {
-            if (this._readQueue.length === 0) {
-                if (this._nextTime < this._approxTime) {
+            if (this._nextTime < this._approxTime) {
+                if (this._readBufferSize < BUFFER_HIGH_WATER_MARK) {
                     // We could use the next tick time here but it's fine to just
                     // call the game update more often instead.
                     this._nextTime = this._wasmInstance.exports._update(this._approxTime) + this._approxTime;
+                } else {
+                    this._missedTicks++;
+                    console.log("missed tick", this._missedTicks);
                 }
             }
         }
@@ -28,12 +34,23 @@ class Termtris {
 
     async read() {
         if (this._readQueue.length > 0) {
-            return this._readQueue.shift();
+            return this._doSyncRead();
         }
         const readPromise = new Promise((resolve, reject) => this._readWaker = resolve);
         await readPromise;
         this._readWaker = null;
-        return this._readQueue.shift();
+        return this._doSyncRead();
+    }
+
+    _doSyncRead() {
+        const result = this._readQueue.shift();
+        this._readBufferSize -= result.length;
+        if (this._missedTicks > 0 && this._readBufferSize < BUFFER_HIGH_WATER_MARK) {
+            console.log("restoring tick", this._missedTicks);
+            this._missedTicks = 0;
+            this._tick();
+        }
+        return result;
     }
 
     write(byte) {
@@ -107,6 +124,7 @@ function loadTermtris() {
                         console.log(new TextDecoder().decode(bytes));
                         if (fd == 1) {
                             termtris._readQueue.push(bytes);
+                            termtris._readBufferSize += bytes.length;
                         }
                         written += len;
                     }

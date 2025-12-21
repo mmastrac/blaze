@@ -8,6 +8,8 @@ extern "C" {}
 
 pub struct WasmSession {
     read_fn: js_sys::Function,
+    read_buffer: js_sys::Uint8Array,
+    read_buffer_index: u32,
     write_fn: js_sys::Function,
 }
 
@@ -27,7 +29,43 @@ fn to_io_error(e: impl AsRef<wasm_bindgen::JsValue>) -> io::Error {
 
 impl WasmSession {
     pub fn new(read_fn: String, write_fn: String) -> io::Result<WasmSession> {
-        let read_fn = js_sys::Function::from(js_sys::eval(&read_fn).map_err(to_io_error)?);
+        // Convert the async function into one that returns null if a promise is resolving.
+        let read_fn = js_sys::Function::from(
+            js_sys::eval(
+                &r#"
+        (function() {
+            const LOW_WATER_MARK = 2;
+            const async_fn = __FN__;
+            let promise = undefined;
+            let next = [];
+            let then = (value) => {
+                next.push(value);
+                if (next.length < LOW_WATER_MARK && promise === undefined) {
+                    promise = async_fn().then(then);
+                } else {
+                    promise = undefined;
+                }
+            };
+
+            return function() {
+                if (next.length === 0) {
+                    if (promise === undefined) {
+                        promise = async_fn().then(then);
+                    }
+                    return null;
+                }
+                const result = next.shift();
+                if (next.length < LOW_WATER_MARK && promise === undefined) {
+                    promise = async_fn().then(then);
+                }
+                return result;
+            };
+        })();
+        "#
+                .replace("__FN__", &read_fn),
+            )
+            .map_err(to_io_error)?,
+        );
         if !read_fn.is_function() {
             return Err(io::Error::other("read_fn was not a function"));
         }
@@ -35,13 +73,19 @@ impl WasmSession {
         if !write_fn.is_function() {
             return Err(io::Error::other("write_fn was not a function"));
         }
-        Ok(Self { read_fn, write_fn })
+        Ok(Self {
+            read_fn,
+            write_fn,
+            read_buffer: js_sys::Uint8Array::new_with_length(0),
+            read_buffer_index: 0,
+        })
     }
 
     pub fn new_message_channel() -> io::Result<WasmSession> {
         let array = js_sys::eval(
             r#"
         (function () {
+            const LOW_WATER_MARK = 2;
             let messageChannel = new MessageChannel();
             const interval = setInterval(function () {
                 window.parent.postMessage({ type: "ready" }, "*");
@@ -53,9 +97,7 @@ impl WasmSession {
             port.onmessage = function (event) {
                 reading = false;
                 const data = new Uint8Array(event.data.data);
-                for (let i = 0; i < data.length; i++) {
-                    readQueue.push(data[i]);
-                }
+                readQueue.push(data);
             };
 
             window.onmessage = function (event) {
@@ -66,7 +108,7 @@ impl WasmSession {
             };
 
             function js_read(data) {
-                if (readQueue.length === 0 && !reading) {
+                if (readQueue.length < LOW_WATER_MARK && !reading) {
                     reading = true;
                     port.postMessage({ type: "read" });
                 }
@@ -89,12 +131,21 @@ impl WasmSession {
         if !write_fn.is_function() {
             return Err(io::Error::other("write_fn was not a function"));
         }
-        Ok(Self { read_fn, write_fn })
+        Ok(Self {
+            read_fn,
+            write_fn,
+            read_buffer: js_sys::Uint8Array::new_with_length(0),
+            read_buffer_index: 0,
+        })
     }
 }
 
 impl SessionEndpoint for WasmSession {
     fn recv(&mut self) -> Ticked {
+        if self.read_buffer_index < self.read_buffer.byte_length() as _ {
+            self.read_buffer_index += 1;
+            return Ticked::Byte(self.read_buffer.get_index(self.read_buffer_index - 1));
+        }
         let b = self.read_fn.call0(&JsValue::UNDEFINED);
         let Ok(b) = b else {
             return Ticked::Idle;
@@ -102,7 +153,9 @@ impl SessionEndpoint for WasmSession {
         if b.is_null_or_undefined() {
             return Ticked::Idle;
         }
-        Ticked::Byte(b.as_f64().unwrap_or_default() as u8)
+        self.read_buffer = js_sys::Uint8Array::from(b);
+        self.read_buffer_index = 1;
+        Ticked::Byte(self.read_buffer.get_index(0))
     }
 
     fn send(&mut self, b: u8) {
