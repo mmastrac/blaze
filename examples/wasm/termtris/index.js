@@ -26,7 +26,6 @@ class Termtris {
                     this._nextTime = this._wasmInstance.exports._update(this._approxTime) + this._approxTime;
                 } else {
                     this._missedTicks++;
-                    console.log("missed tick", this._missedTicks);
                 }
             }
         }

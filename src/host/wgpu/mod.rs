@@ -394,23 +394,6 @@ pub async fn attach_canvas(window: &Arc<winit::window::Window>) {
 
     // Trigger initial resize event
     let _ = window.request_inner_size(get_window_size());
-
-    let promise = Promise::new(&mut |resolve, _reject| {
-        let closure = Closure::wrap(Box::new(move |_timestamp: f64| {
-            resolve.call0(&wasm_bindgen::JsValue::UNDEFINED).unwrap();
-        }) as Box<dyn FnMut(f64)>);
-        web_sys::window()
-            .unwrap()
-            .request_animation_frame(closure.as_ref().unchecked_ref())
-            .unwrap();
-        closure.forget();
-    });
-
-    // Yield to the event loop until the animation frame callback has been called
-    // This ensures Chrome has rendered the canvas before WebGPU initialization
-    JsFuture::from(promise).await.ok();
-
-    info!("Graphics: canvas attached");
 }
 
 async fn create_pixels(window: Arc<winit::window::Window>) -> Result<Pixels<'static>, Error> {
