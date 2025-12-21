@@ -76,16 +76,6 @@ impl FramePolicy {
         }
     }
 
-    /// Call from `about_to_wait` (or once per cycle) to advance purely-time-driven state.
-    /// This may mark the frame dirty (e.g., blink toggles).
-    pub fn advance_timers(&mut self) {
-        // let now = Instant::now();
-
-        // self.mark_dirty();
-    }
-
-    /// Call from `about_to_wait` (or `new_events`) to decide how many 30Hz updates to run.
-    /// You should run updates first, then call `plan_idle(...)` to decide redraw + sleeping.
     pub fn plan_tick(&mut self, cause: winit::event::StartCause) {
         let now = Instant::now();
         let mut updates = 0;
@@ -107,17 +97,16 @@ impl FramePolicy {
         self.updates_to_run = updates;
     }
 
-    /// Call from `about_to_wait`.
     pub fn plan_idle(&mut self) -> IdlePlan {
         let now = Instant::now();
 
         let render_due = now.duration_since(self.last_present) >= self.max_render_interval;
 
         // Active render: only if dirty and due.
-        let mut request_redraw = self.dirty && render_due;
+        let request_redraw = self.dirty && render_due;
 
         // Sleep until the next "interesting" deadline
-        let mut next_deadline = self.next_update;
+        let next_deadline = self.next_update;
 
         IdlePlan {
             control_flow: ControlFlow::WaitUntil(next_deadline),
@@ -125,14 +114,12 @@ impl FramePolicy {
         }
     }
 
-    /// Call after a successful draw/present (from `WindowEvent::RedrawRequested`).
     pub fn on_presented(&mut self) {
         self.last_present = Instant::now();
         self.dirty = false;
         self.will_redraw = false;
     }
 
-    /// Call if your render failed in a retryable way; keeps dirty set so we retry.
     pub fn on_present_failed_retry(&mut self) {
         self.dirty = true;
     }

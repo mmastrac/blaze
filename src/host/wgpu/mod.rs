@@ -3,13 +3,13 @@
 
 pub const REAL_WIDTH: u32 = 800;
 pub const REAL_HEIGHT: u32 = 416;
+// TODO: Waiting on pixels to support non-square aspect ratios
 pub const ASPECT_RATIO: f64 = 4.0 / 3.0;
 pub const WINDOW_WIDTH: u32 = REAL_WIDTH as u32;
 pub const WINDOW_HEIGHT: u32 = (REAL_WIDTH as f64 / ASPECT_RATIO as f64) as u32;
 
 use pixels::{Error, Pixels, PixelsBuilder, SurfaceTexture};
 use std::sync::Arc;
-use std::time::Duration;
 use winit::application::ApplicationHandler;
 use winit::dpi;
 use winit::event::WindowEvent;
