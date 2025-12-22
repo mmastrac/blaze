@@ -81,6 +81,7 @@ html, body {
         if !entry.metadata()?.is_dir() {
             continue;
         }
+        eprintln!("  - {:?}", entry.file_name());
         let example_out_dir = examples_out_dir.join(entry.file_name());
         fs::create_dir_all(&example_out_dir)?;
         fs::copy(&wasm_html, example_out_dir.join("index.html"))?;
@@ -88,6 +89,10 @@ html, body {
         fs::copy(
             entry_path.join("index.js"),
             example_out_dir.join("index.js"),
+        )?;
+        fs::copy(
+            entry_path.join("screenshot.png"),
+            example_out_dir.join("screenshot.png"),
         )?;
         let example_build_dir = entry_path.join("build");
         if example_build_dir.exists() {

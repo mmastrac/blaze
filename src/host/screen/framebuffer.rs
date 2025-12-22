@@ -235,37 +235,55 @@ pub fn run(
                 let Ok(event) = crossterm::event::read() else {
                     return;
                 };
-                if matches!(
-                    event,
+                match event {
                     crossterm::event::Event::Key(crossterm::event::KeyEvent {
                         code: crossterm::event::KeyCode::Char('d'),
                         modifiers: KeyModifiers::NONE,
                         ..
-                    })
-                ) {
-                    let mut file = std::fs::File::create("/tmp/vram.bin").unwrap();
-                    file.write_all(&system.memory.vram[..]).unwrap();
-                    let mut file = std::fs::File::create("/tmp/vram.png").unwrap();
-                    let w = system.memory.vram.len() as u32 / 256 * 8;
-                    info!("Logging VRAM as {w}x256 to /tmp/vram.png");
-                    let mut encoder = png::Encoder::new(&mut file, w, 256);
-                    encoder.set_color(png::ColorType::Grayscale);
-                    encoder.set_depth(png::BitDepth::Eight);
-                    let mut writer = encoder.write_header().unwrap();
-                    let mut row_data = Vec::with_capacity(w as usize * 256);
-                    for row in 0..256 {
-                        for col in 0..w {
-                            let index = row + col / 8 * 256;
-                            let pixel = system.memory.vram[index as usize];
-                            row_data.push(if pixel & (1 << (col % 8)) != 0 {
-                                255
-                            } else {
-                                0
-                            });
+                    }) => {
+                        let mut file = std::fs::File::create("/tmp/vram.bin").unwrap();
+                        file.write_all(&system.memory.vram[..]).unwrap();
+                        let mut file = std::fs::File::create("/tmp/vram.png").unwrap();
+                        let w = system.memory.vram.len() as u32 / 256 * 8;
+                        info!("Logging VRAM as {w}x256 to /tmp/vram.png");
+                        let mut encoder = png::Encoder::new(&mut file, w, 256);
+                        encoder.set_color(png::ColorType::Grayscale);
+                        encoder.set_depth(png::BitDepth::Eight);
+                        let mut writer = encoder.write_header().unwrap();
+                        let mut row_data = Vec::with_capacity(w as usize * 256);
+                        for row in 0..256 {
+                            for col in 0..w {
+                                let index = row + col / 8 * 256;
+                                let pixel = system.memory.vram[index as usize];
+                                row_data.push(if pixel & (1 << (col % 8)) != 0 {
+                                    255
+                                } else {
+                                    0
+                                });
+                            }
                         }
+                        writer.write_image_data(&row_data).unwrap();
+                        info!("VRAM logged to /tmp/vram.png");
                     }
-                    writer.write_image_data(&row_data).unwrap();
-                    info!("VRAM logged to /tmp/vram.png");
+                    crossterm::event::Event::Key(crossterm::event::KeyEvent {
+                        code: crossterm::event::KeyCode::Char('s'),
+                        modifiers: KeyModifiers::NONE,
+                        ..
+                    }) => {
+                        let mut file = std::fs::File::create("/tmp/screenshot.png").unwrap();
+                        let w = crate::host::wgpu::REAL_WIDTH as u32;
+                        let h = crate::host::wgpu::REAL_HEIGHT as u32;
+                        let mut encoder = png::Encoder::new(&mut file, w, h);
+                        encoder.set_color(png::ColorType::Rgba);
+                        encoder.set_depth(png::BitDepth::Eight);
+                        let mut writer = encoder.write_header().unwrap();
+                        let mut row_data = vec![0; w as usize * h as usize * 4];
+                        let render = crate::host::screen::framebuffer::FramebufferRender::default();
+                        render.render(&system, &mut row_data);
+                        writer.write_image_data(&row_data).unwrap();
+                        info!("Screenshot logged to /tmp/screenshot.png");
+                    }
+                    _ => {}
                 }
             }
         }

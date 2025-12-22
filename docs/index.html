@@ -46,33 +46,45 @@
             margin: 0 auto 60px;
             font-size: 1.125rem;
             color: #555555;
-        }
 
-        .intro p {
-            margin-bottom: 16px;
-        }
+            p {
+                margin-bottom: 16px;
+            }
 
-        .intro a {
-            color: #0066cc;
-            text-decoration: none;
-            border-bottom: 1px solid transparent;
-            transition: border-color 0.2s ease;
-        }
+            ul {
+                margin: 16px 0 16px 24px;
+                padding-left: 0;
+                list-style-type: disclosure-closed;
+            }
 
-        .intro a:hover {
-            border-bottom-color: #0066cc;
+            li {
+                margin-bottom: 8px;
+                line-height: 1.6;
+            }
+
+            a {
+                color: #0066cc;
+                text-decoration: none;
+                border-bottom: 1px solid transparent;
+                transition: border-color 0.2s ease;
+
+                &:hover {
+                    border-bottom-color: #0066cc;
+                }
+            }
         }
 
         .examples-section {
-            margin-top: 80px;
-        }
+            max-width: 800px;
+            margin: 0 auto 80px;
 
-        .examples-section h2 {
-            font-size: 2rem;
-            font-weight: 600;
-            margin-bottom: 40px;
-            text-align: center;
-            color: #1a1a1a;
+            h2 {
+                font-size: 2rem;
+                font-weight: 600;
+                margin-bottom: 40px;
+                text-align: center;
+                color: #1a1a1a;
+            }
         }
 
         .examples-grid {
@@ -92,19 +104,39 @@
             text-decoration: none;
             color: inherit;
             cursor: pointer;
-        }
 
-        example:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-        }
+            &:hover {
+                transform: translateY(-4px);
+                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
 
-        example a {
-            display: block;
-            text-decoration: none;
-            color: inherit;
-            width: 100%;
-            height: 100%;
+                .play-button-overlay {
+                    background-color: rgba(0, 0, 0, 0.85);
+                    transform: translate(-50%, -50%) scale(1.1);
+                }
+            }
+
+            a {
+                display: block;
+                text-decoration: none;
+                color: inherit;
+                width: 100%;
+                height: 100%;
+            }
+
+            title {
+                display: block;
+                font-size: 1.25rem;
+                font-weight: 600;
+                margin-bottom: 8px;
+                color: #1a1a1a;
+            }
+
+            description {
+                display: block;
+                font-size: 0.9375rem;
+                color: #666666;
+                line-height: 1.5;
+            }
         }
 
         .preview-container {
@@ -121,7 +153,7 @@
             left: 0;
             width: 100%;
             height: 100%;
-            object-fit: cover;
+            object-fit: contain;
         }
 
         .play-button-overlay {
@@ -138,40 +170,20 @@
             justify-content: center;
             transition: background-color 0.2s ease, transform 0.2s ease;
             pointer-events: none;
-        }
 
-        example:hover .play-button-overlay {
-            background-color: rgba(0, 0, 0, 0.85);
-            transform: translate(-50%, -50%) scale(1.1);
-        }
-
-        .play-button-overlay::after {
-            content: '';
-            width: 0;
-            height: 0;
-            border-left: 20px solid #ffffff;
-            border-top: 12px solid transparent;
-            border-bottom: 12px solid transparent;
-            margin-left: 4px;
+            &::after {
+                content: '';
+                width: 0;
+                height: 0;
+                border-left: 20px solid #ffffff;
+                border-top: 12px solid transparent;
+                border-bottom: 12px solid transparent;
+                margin-left: 4px;
+            }
         }
 
         .example-content {
             padding: 24px;
-        }
-
-        example title {
-            display: block;
-            font-size: 1.25rem;
-            font-weight: 600;
-            margin-bottom: 8px;
-            color: #1a1a1a;
-        }
-
-        example description {
-            display: block;
-            font-size: 0.9375rem;
-            color: #666666;
-            line-height: 1.5;
         }
 
         @media (max-width: 768px) {
@@ -198,23 +210,41 @@
 
         <div class="intro">
             <p>
-                Blaze is an emulator for the VT420 terminal.
+                Blaze is an emulator for the VT420 terminal and more.
             </p>
             <p>
-                It's built on top of <a href="https://crates.io/crates/i8051" target="_blank" rel="noopener noreferrer">the i8051 emulator crate</a>.
+                Blaze is written in Rust, using the <a
+                href="https://crates.io/crates/i8051" target="_blank">the i8051
+                emulator crate</a> and the <a
+                href="https://crates.io/crates/pixels" target="_blank">Pixels
+                framebuffer library</a>.
             </p>
             <p>
-                Blaze emulates the VT420 terminal including the LK201 keyboard, DC7166B/DC7166C video processor with smooth scrolling, multi-session support, and 132-column support, along with the 8051 CPU, 5911 EEPROM, and DUART.
+                Blaze emulates the full hardware of a VT420 terminal including:
+                the LK201 keyboard, DC7166B/DC7166C video processor with smooth
+                scrolling, multi-session support, and 132-column support, along
+                with the 8051 CPU, 5911 EEPROM, and DUART.
+            </p>
+            <p>
+                Blaze can use a number of different connection backends including:
+                <ul>
+                    <li>a process running in a PTY</li>
+                    <li>a WebAssembly module running in a browser</li>
+                    <li>a serial port</li>
+                    <li>a local pipe</li>
+                </ul>
             </p>
         </div>
 
         <section class="examples-section">
             <h2>Examples</h2>
+            <p>Play with the emulator in your browser!</p>
+            <p>Tips: press <code>F3</code> to configure the terminal, <code>F4</code> to switch between sessions, and <code>Ctrl+F4</code> to split the screen.</p>
             <div class="examples-grid">
-                <example preview="about:blank">
+                <example preview="examples/termtris/screenshot.png">
                     <a href="examples/termtris/">
                         <div class="preview-container">
-                            <img src="about:blank" alt="Termtris Preview" class="preview-image">
+                            <img src="examples/termtris/screenshot.png" alt="Termtris Preview" class="preview-image">
                             <div class="play-button-overlay"></div>
                         </div>
                         <div class="example-content">
@@ -224,10 +254,10 @@
                     </a>
                 </example>
 
-                <example preview="about:blank">
+                <example preview="examples/helloworld/screenshot.png">
                     <a href="examples/helloworld/">
                         <div class="preview-container">
-                            <img src="about:blank" alt="Hello World Preview" class="preview-image">
+                            <img src="examples/helloworld/screenshot.png" alt="Hello World Preview" class="preview-image">
                             <div class="play-button-overlay"></div>
                         </div>
                         <div class="example-content">
