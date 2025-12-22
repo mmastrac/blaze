@@ -331,7 +331,7 @@ fn create_demo_text<'a>() -> Paragraph<'a> {
     lines.push(blank_line());
     lines.push(line(&[
         span("Source code is available at "),
-        underlined("https://github.com/mmastrac/blaze-vt"),
+        underlined("https://github.com/mmastrac/blaze"),
     ]));
     lines.push(blank_line());
     lines.push(blank_line());
