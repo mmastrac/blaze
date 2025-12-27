@@ -1,13 +1,9 @@
-use std::{
-    fs::File,
-    io::{self, Write},
-};
+use std::fs::File;
+use std::io;
 
-use raw_tty::{GuardMode, IntoRawMode};
-use ssu::{
-    server::{Server, run_async},
-    session::{SessionConfig, SessionEndpoint},
-};
+use raw_tty::IntoRawMode;
+use ssu::server::run_async;
+use ssu::session::{SessionConfig, SessionEndpoint};
 
 use clap::Parser;
 use tracing::{info, trace};

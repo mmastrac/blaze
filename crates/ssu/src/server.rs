@@ -173,8 +173,9 @@ impl ServerHandle {
 }
 
 #[cfg(feature = "server")]
-pub async fn run_async(sessions: Vec<Box<dyn SessionEndpoint + Send + 'static>>) {
+pub async fn run_async(sessions: Vec<Box<dyn crate::session::SessionEndpoint + Send + 'static>>) {
     use std::os::fd::AsFd;
+    use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use crate::session::Ticked;
