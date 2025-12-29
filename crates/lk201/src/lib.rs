@@ -143,7 +143,7 @@ impl Volume {
 }
 
 /// Commands sent from the computer to the LK201 keyboard
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum LK201Command {
     // LED Control
     /// Enable specified LED(s)
@@ -190,8 +190,6 @@ pub enum LK201Command {
     EnableLK401,
     /// Disable LK401 mode
     DisableLK401,
-    /// C1 command, unknown purpose.
-    UnknownC1,
     /// Temporarily disable auto-repeat for currently pressed key
     TempNoRepeat,
 
@@ -252,7 +250,6 @@ impl LK201Command {
             LK201Command::DisableRepeat => 1,
             LK201Command::EnableLK401 => 1,
             LK201Command::DisableLK401 => 1,
-            LK201Command::UnknownC1 => 1,
             LK201Command::TempNoRepeat => 1,
             LK201Command::SetAutoRepeat { .. } => 3,
             LK201Command::PowerUp => 1,
@@ -294,13 +291,8 @@ impl LK201Command {
             // "Upon successful receipt of the command, the LK201 responds with LK_MODECHG_ACK"
             LK201Command::SetMode { .. } => LK201Response::ModeChangeAck,
             LK201Command::SetModeWithAutoRepeat { .. } => LK201Response::ModeChangeAck,
-            LK201Command::SetAutoRepeat { .. } => LK201Response::ModeChangeAck,
-
-            // Repeat control commands that change mode behavior
-            LK201Command::RepeatToDown => LK201Response::ModeChangeAck,
             LK201Command::TempNoRepeat => LK201Response::ModeChangeAck,
-            LK201Command::EnableRepeat { .. } => LK201Response::ModeChangeAck,
-            LK201Command::DisableRepeat { .. } => LK201Response::ModeChangeAck,
+            LK201Command::SetDefaults => LK201Response::ModeChangeAck,
 
             // Special control commands with specific acks
             LK201Command::TestMode => LK201Response::TestModeAck,
@@ -308,6 +300,8 @@ impl LK201Command {
 
             // Invalid commands return InputError
             LK201Command::Unknown(_) => LK201Response::InputError,
+            LK201Command::Unknown2(_, _) => LK201Response::InputError,
+            LK201Command::Unknown3(_, _, _) => LK201Response::InputError,
 
             // All other commands (LED, bell, click, autorepeat rate, etc.) have no response
             _ => return None,
@@ -433,13 +427,12 @@ impl TryFrom<&VecDeque<u8>> for LK201Command {
             }
 
             // Other Commands
+            0xC1 => Ok(LK201Command::TempNoRepeat),
             0xD9 => Ok(LK201Command::RepeatToDown),
-            0xD1 => Ok(LK201Command::TempNoRepeat),
             0xE1 => Ok(LK201Command::DisableRepeat),
             0xE3 => Ok(LK201Command::EnableRepeat),
             0xE9 => Ok(LK201Command::EnableLK401),
             0xEB => Ok(LK201Command::DisableLK401),
-            0xC1 => Ok(LK201Command::UnknownC1),
 
             // Power-Up and Self Test
             0xFD => Ok(LK201Command::PowerUp),
@@ -453,6 +446,75 @@ impl TryFrom<&VecDeque<u8>> for LK201Command {
 
             // Unknown command
             _ => Ok(LK201Command::Unknown(byte0)),
+        }
+    }
+}
+
+impl Into<Vec<u8>> for LK201Command {
+    fn into(self) -> Vec<u8> {
+        match self {
+            LK201Command::LedEnable(led) => vec![0x13, led.0],
+            LK201Command::LedDisable(led) => vec![0x11, led.0],
+            LK201Command::KeyClickEnable(vol) => vec![0x1B, vol.as_param_byte()],
+            LK201Command::CtrlKeyClickEnable => vec![0xBB],
+            LK201Command::KeyClickDisable => vec![0x99],
+            LK201Command::CtrlKeyClickDisable => vec![0xB9],
+            LK201Command::SoundClick => vec![0x9F],
+            LK201Command::BellEnable(vol) => vec![0x23, vol.as_param_byte()],
+            LK201Command::BellDisable => vec![0xA1],
+            LK201Command::RingBell => vec![0xA7],
+            LK201Command::SetMode { mode, division } => {
+                let mode_bits = match mode {
+                    KeyMode::Down => 0b00,
+                    KeyMode::AutoDown => 0b01,
+                    KeyMode::UpDown => 0b11,
+                    KeyMode::Illegal => 0b10,
+                };
+                vec![(division.0 << 3) | (mode_bits << 1) | 0x80]
+            }
+            LK201Command::SetModeWithAutoRepeat {
+                mode,
+                division,
+                register,
+            } => {
+                let mode_bits = match mode {
+                    KeyMode::Down => 0b00,
+                    KeyMode::AutoDown => 0b01,
+                    KeyMode::UpDown => 0b11,
+                    KeyMode::Illegal => 0b10,
+                };
+                vec![
+                    (division.0 << 3) | (mode_bits << 1),
+                    0x80 | (register.0 & 0x3),
+                ]
+            }
+            LK201Command::RepeatToDown => vec![0xD9],
+            LK201Command::EnableRepeat => vec![0xE3],
+            LK201Command::DisableRepeat => vec![0xE1],
+            LK201Command::EnableLK401 => vec![0xE9],
+            LK201Command::DisableLK401 => vec![0xEB],
+            LK201Command::TempNoRepeat => vec![0xC1],
+            LK201Command::SetAutoRepeat {
+                register,
+                timeout,
+                rate,
+            } => {
+                vec![
+                    0b0_1111_000 | (register.0 << 1),
+                    (timeout / 5) & 0x7F,
+                    rate & 0x7F | 0x80,
+                ]
+            }
+            LK201Command::PowerUp => vec![0xFD],
+            LK201Command::RequestId => vec![0xAB],
+            LK201Command::SetDefaults => vec![0xD3],
+            LK201Command::TestMode => vec![0xCB],
+            LK201Command::TestExit => vec![0x80],
+            LK201Command::Inhibit => vec![0x89],
+            LK201Command::Resume => vec![0x8B],
+            LK201Command::Unknown(b) => vec![b],
+            LK201Command::Unknown2(b1, b2) => vec![b1, b2],
+            LK201Command::Unknown3(b1, b2, b3) => vec![b1, b2, b3],
         }
     }
 }
@@ -739,7 +801,7 @@ mod tests {
         test_parse(&[0xE3], LK201Command::EnableRepeat);
         test_parse(&[0xE1], LK201Command::DisableRepeat);
         test_parse(&[0xD9], LK201Command::RepeatToDown);
-        test_parse(&[0xD1], LK201Command::TempNoRepeat);
+        test_parse(&[0xC1], LK201Command::TempNoRepeat);
         test_parse(&[0xD3], LK201Command::SetDefaults);
         test_parse(&[0xCB], LK201Command::TestMode);
         test_parse(&[0x8B], LK201Command::Resume);
@@ -798,17 +860,7 @@ mod tests {
         let resp = cmd.response().unwrap();
         assert_eq!(resp.to_bytes(), vec![0xBA]);
 
-        // Repeat control commands
-        let cmd = LK201Command::EnableRepeat;
-        let resp = cmd.response().unwrap();
-        assert_eq!(resp.to_bytes(), vec![0xBA]);
-
-        let cmd = LK201Command::DisableRepeat;
-        let resp = cmd.response().unwrap();
-        assert_eq!(resp.to_bytes(), vec![0xBA]);
-
-        let cmd = LK201Command::RepeatToDown;
-        let resp = cmd.response().unwrap();
+        let resp = LK201Command::SetDefaults.response().unwrap();
         assert_eq!(resp.to_bytes(), vec![0xBA]);
 
         // Special acks
@@ -829,7 +881,6 @@ mod tests {
         assert!(LK201Command::LedEnable(Led::new(0x84)).response().is_none());
         assert!(LK201Command::BellEnable(Volume(4)).response().is_none());
         assert!(LK201Command::KeyClickDisable.response().is_none());
-        assert!(LK201Command::SetDefaults.response().is_none());
         assert!(LK201Command::Resume.response().is_none());
     }
 
@@ -952,6 +1003,5 @@ mod tests {
     fn test_lk201() {
         test_parse(&[0xE9], LK201Command::EnableLK401);
         test_parse(&[0xEB], LK201Command::DisableLK401);
-        test_parse(&[0xC1], LK201Command::UnknownC1)
     }
 }

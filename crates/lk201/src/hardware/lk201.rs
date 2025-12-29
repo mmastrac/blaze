@@ -279,7 +279,9 @@ mod tests {
     use std::collections::VecDeque;
 
     use super::*;
-    use crate::{ALL_KEYS, Key, LK201Command};
+    use crate::{
+        ALL_KEYS, AutoRepeatRegister, Division, Key, KeyMode, LK201, LK201Command, Led, Volume,
+    };
     use tracing::Level;
 
     #[test]
@@ -366,6 +368,58 @@ mod tests {
                 Some(b) => {
                     eprintln!("{i:02X}: Unknown response ({b:02X})");
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn test_response() {
+        use LK201Command::*;
+        for cmd in [
+            KeyClickEnable(Volume::new(2).unwrap()),
+            LedEnable(Led::new(0x1)),
+            EnableRepeat,
+            DisableRepeat,
+            RepeatToDown,
+            TempNoRepeat,
+            SoundClick,
+            SetAutoRepeat {
+                register: AutoRepeatRegister::new(0).unwrap(),
+                timeout: 100,
+                rate: 30,
+            },
+            SetMode {
+                mode: KeyMode::AutoDown,
+                division: Division::new(1).unwrap(),
+            },
+            SetModeWithAutoRepeat {
+                mode: KeyMode::AutoDown,
+                division: Division::new(1).unwrap(),
+                register: AutoRepeatRegister::new(0).unwrap(),
+            },
+            SetDefaults,
+        ] {
+            let mut hardware = LK201Hardware::new();
+            for _ in 0..0x1000 {
+                hardware.tick();
+                _ = hardware.serial_out.try_recv();
+            }
+            let bytes: Vec<u8> = cmd.into();
+            for b in &bytes {
+                hardware.serial_in.send(*b).unwrap();
+            }
+            let mut hw_response = vec![];
+            for _ in 0..0x1000 {
+                hardware.tick();
+                if let Ok(byte) = hardware.serial_out.try_recv() {
+                    hw_response.push(byte);
+                }
+            }
+            eprintln!("{cmd:?} ({bytes:02X?}) -> {hw_response:02X?}");
+            if let Some(response) = cmd.response() {
+                assert_eq!(response.to_bytes(), hw_response);
+            } else {
+                assert_eq!(hw_response, vec![]);
             }
         }
     }
