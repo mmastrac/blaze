@@ -23,7 +23,7 @@ fn main() -> io::Result<()> {
         PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is not set"));
     let docs_dir = manifest_dir.join("docs");
     let examples_dir = manifest_dir.join("examples");
-    let wasm_target_dir = manifest_dir.join("target/wasm-examples/blaze");
+    let wasm_target_dir = manifest_dir.join("target/wasm-examples/blaze-vt");
 
     let args = Subcommand::parse();
     let mut tempdir_maybe = None;
