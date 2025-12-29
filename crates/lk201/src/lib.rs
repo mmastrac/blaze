@@ -1,14 +1,20 @@
-//! # LK201 Keyboard Emulator (<https://en.wikipedia.org/wiki/LK201>).
+//! # LK201/LK401 Keyboard Emulator (<https://en.wikipedia.org/wiki/LK201>).
 //!
-//! The hardware interface is documented in
+//! The protocol interface is documented in
 //! <https://www.netbsd.org/docs/Hardware/Machines/DEC/lk201.html>, and some
 //! bootup sequences are documented at <https://vt100.net/keyboard.html>.
+//!
+//! This crate also includes an optional, slower, but far more accurate hardware
+//! emulator gated behind the `hardware` feature flag.
 #![allow(unused)]
 
 #[cfg(feature = "hardware")]
 mod hardware;
 #[cfg(feature = "hardware")]
-pub use hardware::{LK201Hardware, ScanCell};
+pub use hardware::lk201::{LK201Hardware, ScanCell};
+
+mod software;
+pub use software::{LK201, LK201Sender};
 
 mod keys;
 
@@ -88,6 +94,8 @@ pub enum KeyMode {
     Down = 0x80,
     /// Key down generates code, then repeats with LK_REPEAT (0xB4)
     AutoDown = 0x82,
+    /// Illegal value, unused.
+    Illegal = 0x84,
     /// Key down/up both generate codes (for modifier keys)
     UpDown = 0x86,
 }
@@ -174,10 +182,16 @@ pub enum LK201Command {
     },
     /// Convert all LK_AUTODOWN divisions to LK_DOWN
     RepeatToDown,
-    /// Enable auto-repeat on LK_AUTODOWN divisions
-    EnableRepeat { division: Division },
+    /// Enable auto-repeat on LK_AUTODOWN keys
+    EnableRepeat,
     /// Disable auto-repeat on all keys
-    DisableRepeat { division: Division },
+    DisableRepeat,
+    /// Enable LK401 mode
+    EnableLK401,
+    /// Disable LK401 mode
+    DisableLK401,
+    /// C1 command, unknown purpose.
+    UnknownC1,
     /// Temporarily disable auto-repeat for currently pressed key
     TempNoRepeat,
 
@@ -234,8 +248,11 @@ impl LK201Command {
             LK201Command::SetMode { .. } => 1,
             LK201Command::SetModeWithAutoRepeat { .. } => 2,
             LK201Command::RepeatToDown => 1,
-            LK201Command::EnableRepeat { .. } => 1,
-            LK201Command::DisableRepeat { .. } => 1,
+            LK201Command::EnableRepeat => 1,
+            LK201Command::DisableRepeat => 1,
+            LK201Command::EnableLK401 => 1,
+            LK201Command::DisableLK401 => 1,
+            LK201Command::UnknownC1 => 1,
             LK201Command::TempNoRepeat => 1,
             LK201Command::SetAutoRepeat { .. } => 3,
             LK201Command::PowerUp => 1,
@@ -418,18 +435,11 @@ impl TryFrom<&VecDeque<u8>> for LK201Command {
             // Other Commands
             0xD9 => Ok(LK201Command::RepeatToDown),
             0xD1 => Ok(LK201Command::TempNoRepeat),
-
-            0xE1..0xEF => {
-                let division_bits = (byte0 >> 3) & 0b111;
-                let Some(division) = Division::new(division_bits) else {
-                    return Ok(LK201Command::Unknown(byte0));
-                };
-                if byte0 & 0x02 == 0 {
-                    Ok(LK201Command::DisableRepeat { division })
-                } else {
-                    Ok(LK201Command::EnableRepeat { division })
-                }
-            }
+            0xE1 => Ok(LK201Command::DisableRepeat),
+            0xE3 => Ok(LK201Command::EnableRepeat),
+            0xE9 => Ok(LK201Command::EnableLK401),
+            0xEB => Ok(LK201Command::DisableLK401),
+            0xC1 => Ok(LK201Command::UnknownC1),
 
             // Power-Up and Self Test
             0xFD => Ok(LK201Command::PowerUp),
@@ -522,8 +532,8 @@ impl LK201Response {
                 vec![*firmware_id, *hardware_id]
             }
             LK201Response::ModeChangeAck => vec![0xBA],
-            LK201Response::KeyboardLockAck => vec![0xB7],
             LK201Response::TestModeAck => vec![0xB8],
+            LK201Response::KeyboardLockAck => vec![0xB7],
             LK201Response::InputError => vec![0xB6],
             LK201Response::OutputError => vec![0xB5],
             LK201Response::KeyDown(keycode) => vec![*keycode],
@@ -594,158 +604,11 @@ impl From<PowerUpError> for u8 {
     }
 }
 
-pub struct LK201Sender {
-    send: mpsc::Sender<u8>,
-}
-
-impl LK201Sender {
-    fn new(send: mpsc::Sender<u8>) -> Self {
-        Self { send }
-    }
-
-    pub fn send_special_key(&self, key: SpecialKey) {
-        _ = self.send.send(key as u8);
-    }
-
-    pub fn send_char(&self, c: char) {
-        if let Some((key, shift)) = Key::char_to_keycode(c) {
-            if shift {
-                _ = self.send.send(0xae); // shift
-            }
-            _ = self.send.send(key as u8);
-            if shift {
-                _ = self.send.send(0xb3); // all up
-            }
-        }
-    }
-
-    pub fn send_ctrl_char(&self, c: char) {
-        if let Some((keycode, shift)) = Key::char_to_keycode(c) {
-            _ = self.send.send(0xaf); // ctrl
-            if shift {
-                _ = self.send.send(0xae); // shift
-            }
-            _ = self.send.send(keycode as u8);
-            _ = self.send.send(0xb3); // all up
-        }
-    }
-
-    pub fn send_ctrl_special_key(&self, key: SpecialKey) {
-        _ = self.send.send(0xaf); // ctrl
-        _ = self.send.send(key as u8);
-        _ = self.send.send(0xb3); // all up
-    }
-
-    pub fn send_shift_special_key(&self, key: SpecialKey) {
-        _ = self.send.send(0xae); // shift
-        _ = self.send.send(key as u8);
-        _ = self.send.send(0xb3); // all up
-    }
-
-    pub fn send_shift_ctrl_special_key(&self, key: SpecialKey) {
-        _ = self.send.send(0xaf); // ctrl
-        _ = self.send.send(0xae); // shift
-        _ = self.send.send(key as u8);
-        _ = self.send.send(0xb3); // all up
-    }
-
-    pub fn send_escape(&self) {
-        _ = self.send.send(0xaf); // ctrl
-        _ = self.send.send(0xcb); // 3
-        _ = self.send.send(0xb3); // all up
-    }
-}
-
-pub struct LK201 {
-    recv: mpsc::Receiver<u8>,
-    send: mpsc::Sender<u8>,
-    kbd_queue: VecDeque<u8>,
-    collect_commands: bool,
-    collected_bytes: Vec<u8>,
-    collected_commands: Vec<LK201Command>,
-}
-
-impl LK201 {
-    pub fn new(send: mpsc::Sender<u8>, recv: mpsc::Receiver<u8>) -> Self {
-        Self {
-            send,
-            recv,
-            kbd_queue: VecDeque::new(),
-            collect_commands: false,
-            collected_bytes: Vec::new(),
-            collected_commands: Vec::new(),
-        }
-    }
-
-    pub fn start_collecting_commands(&mut self) {
-        self.collect_commands = true;
-    }
-
-    pub fn stop_collecting_commands(&mut self) -> (Vec<u8>, Vec<LK201Command>) {
-        self.collect_commands = false;
-        (
-            std::mem::take(&mut self.collected_bytes),
-            std::mem::take(&mut self.collected_commands),
-        )
-    }
-
-    pub fn sender(&self) -> LK201Sender {
-        LK201Sender::new(self.send.clone())
-    }
-
-    pub fn tick(&mut self) {
-        // Accumulate incoming bytes
-        let mut received = false;
-        while let Ok(byte) = self.recv.try_recv() {
-            if self.collect_commands {
-                self.collected_bytes.push(byte);
-            }
-            self.kbd_queue.push_back(byte);
-            received = true;
-        }
-
-        // Try to parse a command from the queue
-        if self.kbd_queue.is_empty() || !received {
-            return;
-        }
-
-        // Attempt to parse command
-        let Ok(command) = LK201Command::try_from(&self.kbd_queue) else {
-            return;
-        };
-
-        if self.collect_commands {
-            self.collected_commands.push(command.clone());
-        }
-
-        // Successfully parsed a command
-        let cmd_len = command.len();
-
-        trace!("KBD: Command {:?}", command);
-
-        // Remove the command bytes from the queue
-        for _ in 0..cmd_len {
-            self.kbd_queue.pop_front();
-        }
-
-        // Send response if the command has one
-        if let Some(response) = command.response() {
-            trace!(
-                "KBD: Sending response {:?} = {:02X?}",
-                response,
-                response.to_bytes()
-            );
-            for byte in response.to_bytes() {
-                _ = self.send.send(byte);
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[track_caller]
     fn test_parse(input: &[u8], expected: LK201Command) {
         let queue = VecDeque::from_iter(input.iter().copied());
         let command = LK201Command::try_from(&queue).unwrap();
@@ -873,18 +736,8 @@ mod tests {
     fn test_control_commands() {
         test_parse(&[0xFD], LK201Command::PowerUp);
         test_parse(&[0xAB], LK201Command::RequestId);
-        test_parse(
-            &[0xE3],
-            LK201Command::EnableRepeat {
-                division: Division(4),
-            },
-        );
-        test_parse(
-            &[0xE1],
-            LK201Command::DisableRepeat {
-                division: Division(4),
-            },
-        );
+        test_parse(&[0xE3], LK201Command::EnableRepeat);
+        test_parse(&[0xE1], LK201Command::DisableRepeat);
         test_parse(&[0xD9], LK201Command::RepeatToDown);
         test_parse(&[0xD1], LK201Command::TempNoRepeat);
         test_parse(&[0xD3], LK201Command::SetDefaults);
@@ -946,15 +799,11 @@ mod tests {
         assert_eq!(resp.to_bytes(), vec![0xBA]);
 
         // Repeat control commands
-        let cmd = LK201Command::EnableRepeat {
-            division: Division(13),
-        };
+        let cmd = LK201Command::EnableRepeat;
         let resp = cmd.response().unwrap();
         assert_eq!(resp.to_bytes(), vec![0xBA]);
 
-        let cmd = LK201Command::DisableRepeat {
-            division: Division(13),
-        };
+        let cmd = LK201Command::DisableRepeat;
         let resp = cmd.response().unwrap();
         assert_eq!(resp.to_bytes(), vec![0xBA]);
 
@@ -1097,5 +946,12 @@ mod tests {
                 register: AutoRepeatRegister(2),
             },
         );
+    }
+
+    #[test]
+    fn test_lk201() {
+        test_parse(&[0xE9], LK201Command::EnableLK401);
+        test_parse(&[0xEB], LK201Command::DisableLK401);
+        test_parse(&[0xC1], LK201Command::UnknownC1)
     }
 }

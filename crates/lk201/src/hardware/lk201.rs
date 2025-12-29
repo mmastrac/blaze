@@ -6,10 +6,11 @@ use i8051::{Cpu, CpuContext, CpuView, PortMapper, ReadOnlyMemoryMapper};
 
 use crate::Key;
 
-static ROM: &[u8] = include_bytes!("23-004M2-00.BIN");
-
 const ROW_COUNT: u8 = 18;
 const COL_COUNT: u8 = 8;
+
+static LK201_ROM: &[u8] = include_bytes!("23-004M2-00.BIN");
+const LK201_ROM_BOOTED_ADDRESS: u16 = 0x0066;
 
 /// Scancode map for the LK201 keyboard.
 const SCANCODE_MAP: [u8; ROW_COUNT as usize * COL_COUNT as usize] = [
@@ -105,9 +106,9 @@ impl LK201Hardware {
         let (serial, serial_in, serial_out) = Serial::new(60);
         let mut ports = LK201Ports::default();
         ports.ports[0].0 = 0x00;
-        ports.ports[0].0 = 0xFF;
-        ports.ports[0].0 = 0xFF;
-        ports.ports[0].0 = 0xFF;
+        ports.ports[1].0 = 0xFF;
+        ports.ports[2].0 = 0xFF;
+        ports.ports[3].0 = 0xFF;
         let mut this = Self {
             cpu: Cpu::new(),
             system: LK201System {
@@ -120,7 +121,7 @@ impl LK201Hardware {
         };
 
         // Advance until the keyboard is (mostly) initialized.
-        while this.cpu.pc != 0x0066 {
+        while this.cpu.pc != LK201_ROM_BOOTED_ADDRESS {
             this.tick();
         }
 
@@ -238,13 +239,13 @@ impl PortMapper for LK201System {
 
 impl ReadOnlyMemoryMapper for LK201System {
     fn len(&self) -> u32 {
-        ROM.len() as u32
+        LK201_ROM.len() as u32
     }
     fn read<C: CpuView>(&self, cpu: &C, addr: u32) -> u8 {
-        if addr >= ROM.len() as u32 {
+        if addr >= LK201_ROM.len() as u32 {
             return 0xff;
         }
-        ROM[addr as usize]
+        LK201_ROM[addr as usize]
     }
 }
 
@@ -275,11 +276,11 @@ impl CpuContext for LK201System {
 
 #[cfg(test)]
 mod tests {
-    use tracing::Level;
-
-    use crate::{ALL_KEYS, Key};
+    use std::collections::VecDeque;
 
     use super::*;
+    use crate::{ALL_KEYS, Key, LK201Command};
+    use tracing::Level;
 
     #[test]
     fn test_hardware() {
@@ -329,6 +330,44 @@ mod tests {
         }
         eprintln!("scancode map: {:02X?}", scancode_map);
         assert_eq!(scancode_map, SCANCODE_MAP);
+    }
+
+    #[test]
+    fn test_hardware_commands() {
+        for i in 0x80..=0xFF {
+            let mut hardware = LK201Hardware::new();
+            for _ in 0..0x1000 {
+                hardware.tick();
+                _ = hardware.serial_out.try_recv();
+            }
+            hardware.serial_in.send(i).unwrap();
+            let mut response = None;
+            for _ in 0..0x1000 {
+                hardware.tick();
+                if let Ok(byte) = hardware.serial_out.try_recv() {
+                    response = Some(byte);
+                }
+            }
+
+            match response {
+                None => {
+                    let cmd = LK201Command::try_from(&VecDeque::from_iter([i & !0x80, 0]));
+                    eprintln!("{i:02X}: Waiting for more data (alias of {cmd:02X?}");
+                }
+                Some(0xB6) => {}
+                Some(0xB7) => {
+                    let cmd = LK201Command::try_from(&VecDeque::from_iter([i]));
+                    eprintln!("{i:02X}: Keyboard locked (cmd = {cmd:?}");
+                }
+                Some(0xBA) => {
+                    let cmd = LK201Command::try_from(&VecDeque::from_iter([i]));
+                    eprintln!("{i:02X}: Mode change ack (cmd = {cmd:?}");
+                }
+                Some(b) => {
+                    eprintln!("{i:02X}: Unknown response ({b:02X})");
+                }
+            }
+        }
     }
 
     #[test]
