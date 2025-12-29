@@ -106,7 +106,11 @@ pub struct Division(pub u8);
 
 impl Division {
     pub fn new(div: u8) -> Option<Self> {
-        if div <= 14 { Some(Division(div)) } else { None }
+        if div <= 14 && div > 0 {
+            Some(Division(div))
+        } else {
+            None
+        }
     }
 }
 

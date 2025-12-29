@@ -14,6 +14,13 @@ impl LK201Sender {
 
     pub fn send_special_key(&self, key: SpecialKey) {
         _ = self.send.send(key as u8);
+        // F1-F5 are UpDown
+        match key {
+            SpecialKey::F1 | SpecialKey::F2 | SpecialKey::F3 | SpecialKey::F4 | SpecialKey::F5 => {
+                _ = self.send.send(0xb3); // all up
+            }
+            _ => {}
+        }
     }
 
     pub fn send_char(&self, c: char) {
