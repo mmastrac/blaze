@@ -41,6 +41,15 @@
             color: #1a1a1a;
         }
 
+        .badges {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+            align-items: baseline;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+
         .intro {
             max-width: 800px;
             margin: 0 auto 60px;
@@ -223,6 +232,18 @@
         <header>
             <h1>Blaze: a DEC VT420 (and more) Emulator</h1>
         </header>
+
+        <div class="badges">
+            <!-- GitHub Repo and Stars badge -->
+            <a href="https://github.com/mmastrac/blaze" target="_blank" rel="noopener" style="display: inline-flex; align-items: center; gap: 4px; text-decoration: none;">
+                <img src="https://img.shields.io/github/stars/mmastrac/blaze?style=social" alt="GitHub stars" style="vertical-align: middle;">
+                <img src="https://img.shields.io/badge/GitHub-Repository-181717?logo=github&logoColor=white&style=flat" alt="GitHub" style="vertical-align: middle;">
+            </a>
+            <!-- crates.io badge -->
+            <!-- <a href="https://crates.io/crates/i8051" target="_blank" rel="noopener" style="text-decoration: none;">
+                <img src="https://img.shields.io/crates/v/i8051.svg?label=crates.io&color=orange&logo=rust" alt="Crate">
+            </a> -->
+        </div>
 
         <div class="intro">
             <p class="callout">
