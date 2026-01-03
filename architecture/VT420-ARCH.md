@@ -10,12 +10,16 @@ reference.
  - CPU: 8051
  - ROM: 64kB (bank switched via DC7166B pin)
  - Video/Memory Processor: DC7166B/DC7166C (custom part)
- - RAM: 128kB (dual-ported VRAM 256k x 4bit) OR 32kB VRAM + 32kB DRAM (64k x 4bit)
-   - Larger RAM configuration may be used for PCTERM support (not implemented yet)
+ - VRAM: 128kB (dual-ported VRAM 256k x 4bit) OR 32kB VRAM + 32kB DRAM (64k x 4bit)
+   - Larger RAM configuration _may_ be used for PCTERM support (not implemented yet)
+   - The firmware may perform a RAM test during reset to determine the RAM configuration
+ - SRAM: 32kB 
  - UART: 2681 DUART
  - UART Mux: 74LS157 (2 to 1 mux)
  - EEPROM: 5911 (128 x 8 or 64 x 16 serial EEPROM)
  - Keyboard: LK201/LK401
+   - Internal processor: 8051 (note: other CPU variants exist)
+   - Multiple software implementations of both keyboards exist in the wild, spec is fuzzy
 
 ```mermaid
 
@@ -63,11 +67,11 @@ P3:
 
 ## Memory Map
 
- - 0x0000-0x7fdf: VRAM (Addressable via "zero page" + P2 as well)
- - 0x7eXX-0x????: Possibly a mirror for the registers at 0x7ff0-0x7fff
+ - 0x0000-0x7fdf: VRAM
+ - 0x7eXX-0x????: Software-only mirror for the registers at 0x7ff0-0x7fff
  - 0x7fe0-0x7fef: DUART
- - 0x7ff0-0x7fff: Memory Processor Control
- - 0x8000-0xffff: SRAM
+ - 0x7ff0-0x7fff: Video/Memory Processor Control
+ - 0x8000-0xffff: SRAM (or alternatively, VRAM font mapping if correct bits set)
 
 ## DUART Ports
 
@@ -175,15 +179,16 @@ Output:
 
  - 0x00, 0x01 ...: Per-row data
     - Byte 0:
-        - `_______.` => memory page for row data
-        - `.......x` => 1 = force 132 columns
+        - `xxxxxxx.` => video memory page for row data
+        - `.......x` => 1 = unknown
     - Byte 1:
         - 0x02: split window divider
         - 0x04: double-width
         - 0x08: double-width, double-height top half
         - 0x0c: double-width, double-height bottom half
-        - `......x.` => 1 = double width
-        - `.......x` => 1 = swap between screen 0 and screen 1 attributes
+        - `....xx..` => 1 = double width
+        - `......x.` => 1 = swap between screen 0 and screen 1 attributes
+        - `xxxx...x` => 1 = unknown
 
  - Char attributes:
     
