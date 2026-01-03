@@ -1,12 +1,17 @@
 # Architecture
 
+These architecture notes were developed from reverse engineering the VT420
+terminal hardware and firmware. Some of the information may be incomplete or
+incorrect, and the notes are not meant to be a complete or authoritative
+reference.
+
 ## Components
 
  - CPU: 8051
- - ROM: 128kB (128k x 8bit)
+ - ROM: 64kB (bank switched via DC7166B pin)
  - Video/Memory Processor: DC7166B/DC7166C (custom part)
- - Video RAM: 128kB (dual-ported VRAM 256k x 4bit) OR 32kB VRAM + 32kB DRAM (64k x 4bit)
- - RAM: 32kB (32k x 8bit)
+ - RAM: 128kB (dual-ported VRAM 256k x 4bit) OR 32kB VRAM + 32kB DRAM (64k x 4bit)
+   - Larger RAM configuration may be used for PCTERM support (not implemented yet)
  - UART: 2681 DUART
  - UART Mux: 74LS157 (2 to 1 mux)
  - EEPROM: 5911 (128 x 8 or 64 x 16 serial EEPROM)

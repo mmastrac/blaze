@@ -13,23 +13,29 @@ crate](https://crates.io/crates/i8051).
 
 ## Features
 
-Emulates the VT420 terminal:
+Emulates the VT420 terminal hardware fully:
 
-- LK201 keyboard
+- LK201/LK401 keyboard (via the [`lk201`](https://crates.io/crates/lk201) crate)
+  - Both hardware and software emulation are supported
 - DC7166B/DC7166C video processor, including:
   - Smooth scrolling
   - Multi-session support
   - 80/132-column support
-  - Custom fonts
-- 8051 CPU
+  - Variable line height support
+  - Uploadable custom fonts
+- 8051 CPU (via the [`i8051`](https://crates.io/crates/i8051) crate)
 - 5911 EEPROM
 - DUART
+  - Two simultaneous serial sessions supported
+  - Various serial I/O implementations (via the [`ssu`](https://crates.io/crates/ssu) crate)
 
 ## Screenshots
 
 Graphical UI:
 
-![Screenshot](docs/screenshot-1.png) ![Screenshot](docs/screenshot-2.png)
+![Screenshot](docs/screenshot-1.png)
+
+![Screenshot](docs/screenshot-2.png)
 
 Textual UI:
 
