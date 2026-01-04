@@ -3291,6 +3291,7 @@ dependencies = [
 name = "ssu"
 version = "0.1.0"
 dependencies = [
+ "atomic-waker",
  "clap",
  "js-sys",
  "pollster 0.4.0",

@@ -15,11 +15,13 @@ use i8051::breakpoint::Breakpoints;
 use i8051::peripheral::{P3_INT1, Serial, Timer};
 use i8051::{Cpu, CpuContext, CpuView, DefaultPortMapper, PortMapper};
 use ssu::session::SessionConfig;
+use ssu::session::SessionUnsend;
 use tracing::debug;
 use tracing::{info, trace, warn};
 
 use crate::host::comm::CommSession;
 use crate::host::comm::connect_duart;
+use crate::host::comm::connect_session;
 use crate::machine::TerminalSystem;
 use crate::machine::generic::duart::DUART;
 use crate::machine::generic::rom::ROM;
@@ -88,7 +90,7 @@ impl System {
         let comm_a = if let Some(config) = comm1 {
             connect_duart(channel_a, config)?
         } else {
-            crate::host::demo::DemoComm::new(channel_a)
+            connect_session(channel_a, crate::host::demo::DemoComm.boot()?)?
         };
 
         #[cfg(not(feature = "demo"))]

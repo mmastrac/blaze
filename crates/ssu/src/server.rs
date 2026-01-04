@@ -173,12 +173,11 @@ impl ServerHandle {
 }
 
 #[cfg(feature = "server")]
-pub async fn run_async(sessions: Vec<Box<dyn crate::session::SessionEndpoint + Send + 'static>>) {
+pub async fn run_async(sessions: Vec<crate::session::SessionParts>) {
+    use crate::session::SessionParts;
     use std::os::fd::AsFd;
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    use crate::session::Ticked;
 
     trace!("Entering run_async");
     let server = Server::new(sessions.len() as u8);
@@ -214,12 +213,15 @@ pub async fn run_async(sessions: Vec<Box<dyn crate::session::SessionEndpoint + S
     });
 
     for ((mut read, mut write), session) in server.session_handles.into_iter().zip(sessions) {
-        let (mut sread, mut swrite) = session.split();
+        let SessionParts {
+            send: mut swrite,
+            recv: mut sread,
+        } = session;
         let (tx, mut rx) = tokio::sync::mpsc::channel::<u8>(1);
-        tokio::task::spawn_blocking(move || {
+        tokio::task::spawn(async move {
             loop {
-                let b = rx.blocking_recv().unwrap();
-                swrite.send(b);
+                let b = rx.recv().await.unwrap();
+                poll_fn(|cx| swrite.poll_send(cx, b)).await.unwrap();
             }
         });
         tokio::task::spawn(async move {
@@ -236,16 +238,15 @@ pub async fn run_async(sessions: Vec<Box<dyn crate::session::SessionEndpoint + S
         });
 
         let (tx, mut rx) = tokio::sync::mpsc::channel::<u8>(1);
-        tokio::task::spawn_blocking(move || {
+        tokio::task::spawn(async move {
             loop {
-                match sread.recv() {
-                    Ticked::Byte(b) => {
+                match poll_fn(|cx| sread.poll_recv(cx)).await {
+                    Ok(b) => {
                         let Ok(_) = tx.blocking_send(b) else {
                             break;
                         };
                     }
-                    Ticked::IdleInput | Ticked::Idle => {
-                        std::thread::sleep(Duration::from_millis(10));
+                    Err(e) => {
                         break;
                     }
                 }

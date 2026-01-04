@@ -1,18 +1,14 @@
 use std::process::Stdio;
 use std::{io, thread};
 
-use crate::session::IoSessionEndpoint;
-use crate::session::io::IoSessionReadWrite;
+use crate::session::io_session::{IoSession, IoSessionReadWrite};
 
-pub struct ExecSession {
-    command: String,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecConfig {
+    pub command: String,
 }
 
-impl ExecSession {
-    pub fn new(command: String) -> Self {
-        ExecSession { command }
-    }
-
+impl ExecConfig {
     pub fn start(self) -> io::Result<IoSessionReadWrite> {
         // Spawn command via shell
         let mut child = std::process::Command::new("/bin/sh")
@@ -31,7 +27,7 @@ impl ExecSession {
     }
 }
 
-impl IoSessionEndpoint for ExecSession {
+impl IoSession for ExecConfig {
     fn start(self, ready: impl FnOnce(std::io::Result<IoSessionReadWrite>) + Send + 'static) {
         thread::spawn(move || {
             let result = self.start();

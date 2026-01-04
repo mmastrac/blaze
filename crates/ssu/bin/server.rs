@@ -3,7 +3,7 @@ use std::io;
 
 use raw_tty::IntoRawMode;
 use ssu::server::run_async;
-use ssu::session::{SessionConfig, SessionEndpoint};
+use ssu::session::{SessionConfig, SessionParts};
 
 use clap::Parser;
 use tracing::{info, trace};
@@ -30,7 +30,7 @@ pub async fn main() {
     let stdin = io::stdin().into_raw_mode().unwrap();
     trace!("Entering sessions");
 
-    let sessions: Vec<Box<dyn SessionEndpoint + Send + 'static>> = args
+    let sessions: Vec<SessionParts> = args
         .session
         .into_iter()
         .map(|config| config.start())

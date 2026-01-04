@@ -1,7 +1,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use i8051::sfr::{self, SFR_P1, SFR_P2, SFR_P3};
+use i8051::sfr::{SFR_P1, SFR_P2, SFR_P3};
 use i8051::{CpuView, MemoryMapper, PortMapper};
 use tracing::trace;
 

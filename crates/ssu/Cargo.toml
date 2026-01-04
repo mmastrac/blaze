@@ -10,6 +10,7 @@ repository = "https://github.com/mmastrac/blaze"
 [dependencies]
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+atomic-waker = "1.1"
 
 # features=pty
 pty-process = { version = "0.5", optional = true }
@@ -27,15 +28,17 @@ serialport = { version = "4", optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
 js-sys = { version = "0.3.82", features = [], optional = true }
 
+
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 
 [features]
 default = []
+std-io = []
 session-config = ["dep:clap", "dep:shellish_parse"]
 server = ["dep:clap", "dep:raw_tty", "dep:tokio", "session-config"]
-pty = ["dep:pty-process"]
-serial = ["dep:serialport"]
+pty = ["dep:pty-process", "std-io"]
+serial = ["dep:serialport", "std-io"]
 wasm = ["dep:wasm-bindgen", "dep:js-sys"]
 
 [[bin]]

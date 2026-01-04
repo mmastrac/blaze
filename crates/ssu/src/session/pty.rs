@@ -4,24 +4,16 @@ use std::{fs::File, io, os::fd::OwnedFd};
 
 use pty_process::blocking::Command;
 
-use crate::session::IoSessionEndpoint;
-use crate::session::io::IoSessionReadWrite;
+use crate::session::io_session::{IoSession, IoSessionReadWrite};
 
-pub struct PtySession {
-    command: String,
-    cols: NonZeroU16,
-    rows: NonZeroU16,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecPtyConfig {
+    pub cmd: String,
+    pub rows: NonZeroU16,
+    pub cols: NonZeroU16,
 }
 
-impl PtySession {
-    pub fn new(command: String, cols: NonZeroU16, rows: NonZeroU16) -> Self {
-        PtySession {
-            command,
-            cols,
-            rows,
-        }
-    }
-
+impl ExecPtyConfig {
     fn start(self) -> io::Result<IoSessionReadWrite> {
         let (pty, pts) = pty_process::blocking::open()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
@@ -31,7 +23,7 @@ impl PtySession {
         // Spawn command via shell
         let _child = Command::new("/bin/sh")
             .arg("-c")
-            .arg(&self.command)
+            .arg(&self.cmd)
             .spawn(pts)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
@@ -42,7 +34,7 @@ impl PtySession {
     }
 }
 
-impl IoSessionEndpoint for PtySession {
+impl IoSession for ExecPtyConfig {
     fn start(self, ready: impl FnOnce(std::io::Result<IoSessionReadWrite>) + Send + 'static) {
         thread::spawn(move || {
             let result = self.start();

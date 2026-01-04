@@ -1,10 +1,11 @@
-use std::{cell::RefCell, collections::VecDeque, io, rc::Rc};
+use std::{cell::RefCell, io, rc::Rc};
 
 use ratatui::{
     backend::{ClearType, WindowSize},
     buffer::Cell,
     layout::{Position, Size},
 };
+use ssu::session::loopback::WakeableQueueSend;
 
 pub const VT_DOUBLE_WIDTH_LINE: ratatui::style::Color = ratatui::style::Color::Rgb(1, 1, 1);
 pub const VT_DOUBLE_HEIGHT_TOP_LINE: ratatui::style::Color = ratatui::style::Color::Rgb(1, 1, 2);
@@ -12,28 +13,32 @@ pub const VT_DOUBLE_HEIGHT_BOTTOM_LINE: ratatui::style::Color = ratatui::style::
 
 #[derive(Clone)]
 pub struct DecBackend {
-    pub pending: Rc<RefCell<VecDeque<u8>>>,
+    pub pending: WakeableQueueSend,
     pub size: Rc<RefCell<Size>>,
     pub cursor_pos: Rc<RefCell<Position>>,
     pub current_style: Rc<RefCell<ratatui::style::Style>>,
     pub cursor_visible: Rc<RefCell<bool>>,
 }
 
-impl Default for DecBackend {
-    fn default() -> Self {
+impl DecBackend {
+    pub fn new(output: WakeableQueueSend) -> Self {
         Self {
-            pending: Rc::new(RefCell::new(VecDeque::new())),
+            pending: output,
             size: Rc::new(RefCell::new(Size::new(80, 24))),
             cursor_pos: Rc::new(RefCell::new(Position::new(0, 0))),
             current_style: Rc::new(RefCell::new(ratatui::style::Style::default())),
             cursor_visible: Rc::new(RefCell::new(true)),
         }
     }
+
+    pub fn send_bytes(&self, buf: &[u8]) {
+        self.pending.send_bytes(buf);
+    }
 }
 
 impl io::Write for DecBackend {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.pending.borrow_mut().extend(buf);
+        self.pending.send_bytes(buf);
         Ok(buf.len())
     }
     fn flush(&mut self) -> io::Result<()> {
@@ -43,20 +48,20 @@ impl io::Write for DecBackend {
 
 impl DecBackend {
     fn write_bytes(&self, bytes: &[u8]) {
-        self.pending.borrow_mut().extend(bytes);
+        self.pending.send_bytes(bytes);
     }
 
     fn write_str(&self, s: &str) {
         // Treat UTF-8 chars as bytes
         for c in s.chars() {
             if (c as u32) < 0x80 {
-                self.pending.borrow_mut().push_back(c as u8);
+                self.pending.send(c as u8);
             } else if (c as u32) < 0x100 {
-                self.pending.borrow_mut().push_back(b'\x0e');
-                self.pending.borrow_mut().push_back(c as u8 - 0x80);
-                self.pending.borrow_mut().push_back(b'\x0f');
+                self.pending.send(b'\x0e');
+                self.pending.send(c as u8 - 0x80);
+                self.pending.send(b'\x0f');
             } else {
-                self.pending.borrow_mut().push_back(b'?');
+                self.pending.send(b'?');
             }
         }
     }
