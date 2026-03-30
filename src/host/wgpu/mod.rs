@@ -337,31 +337,6 @@ fn get_canvas(#[allow(unused)] window: &winit::window::Window) -> web_sys::HtmlC
 }
 
 #[cfg(target_arch = "wasm32")]
-fn patch_webgpu() {
-    js_sys::eval(
-        r#"""
-        console.log("Patching WebGPU GPUAdapter.requestDevice");
-        const _oldRequestDevice = window?.GPUAdapter?.prototype?.requestDevice;
-        if (_oldRequestDevice) {
-            window.GPUAdapter.prototype.requestDevice = async function(limits) {
-                delete limits?.requiredLimits?.maxInterStageShaderComponents;
-                try {
-                    console.log("Requesting WebGPU device with limits:", limits);
-                    const device = await _oldRequestDevice.call(this, limits);
-                    console.log("WebGPU device acquired:", device);
-                    return device;
-                } catch (e) {
-                    console.error("Error requesting WebGPU device:", e);
-                    throw e;
-                }
-            };
-        }
-    """#,
-    )
-    .expect("Failed to evaluate WebGPU patch");
-}
-
-#[cfg(target_arch = "wasm32")]
 pub async fn attach_canvas(window: &Arc<winit::window::Window>) {
     use js_sys::Promise;
     use wasm_bindgen::JsCast;
