@@ -2,6 +2,7 @@ use std::task::{Context, Poll};
 use std::{fmt, io};
 
 mod config;
+#[cfg(feature = "session-config")]
 mod config_parser;
 mod io_session;
 mod sync;

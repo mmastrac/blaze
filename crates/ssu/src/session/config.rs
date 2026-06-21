@@ -57,12 +57,17 @@ impl SessionConfig {
     }
 
     pub fn start_unsend(self) -> std::io::Result<SessionPartsUnsend> {
-        use crate::session::SessionUnsend;
         match self {
             #[cfg(feature = "wasm")]
-            SessionConfig::Wasm(config) => config.boot(),
+            SessionConfig::Wasm(config) => {
+                use crate::session::SessionUnsend;
+                config.boot()
+            }
             #[cfg(feature = "wasm")]
-            SessionConfig::MessageChannel(config) => config.boot(),
+            SessionConfig::MessageChannel(config) => {
+                use crate::session::SessionUnsend;
+                config.boot()
+            }
             _ => self.start().map(|parts| parts.into()),
         }
     }

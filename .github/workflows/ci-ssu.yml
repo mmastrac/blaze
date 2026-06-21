@@ -1,0 +1,32 @@
+name: SSU crate
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "crates/ssu/**"
+      - ".github/workflows/ci-ssu.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "crates/ssu/**"
+      - ".github/workflows/ci-ssu.yml"
+  workflow_dispatch:
+
+jobs:
+  feature-matrix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.92.0
+      - uses: taiki-e/install-action@cargo-hack
+      - name: Check all feature combinations
+        run: cargo hack check -p ssu --feature-powerset --no-dev-deps
+      - name: Check server binary
+        run: cargo check -p ssu --no-default-features --features pty,server --bin server
+      - name: Install WASM target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Check WASM target
+        run: cargo check -p ssu --no-default-features --features wasm,session-config --target wasm32-unknown-unknown
