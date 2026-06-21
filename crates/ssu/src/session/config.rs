@@ -46,12 +46,10 @@ impl SessionConfig {
             SessionConfig::ExecPty(config) => boot_io(config),
             #[cfg(feature = "serial")]
             SessionConfig::Serial(config) => boot_io(config),
-            _ => Err(std::io::Error::new(
+            #[cfg(feature = "wasm")]
+            SessionConfig::Wasm(_) | SessionConfig::MessageChannel(_) => Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
-                format!(
-                    "Cannot boot session {:?} with multi-threaded endpoint",
-                    self
-                ),
+                "Cannot boot WASM session with multi-threaded endpoint; use start_unsend()",
             )),
         }
     }

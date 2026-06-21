@@ -20,7 +20,6 @@ shellish_parse = { version = "2", optional = true }
 
 raw_tty = { version = "0.1", optional = true }
 
-pollster = { version = "0.4", optional = true }
 tokio = { version = "1", features = ["full"], optional = true }
 
 serialport = { version = "4", optional = true }
@@ -42,6 +41,6 @@ serial = ["dep:serialport", "std-io"]
 wasm = ["dep:wasm-bindgen", "dep:js-sys"]
 
 [[bin]]
-name = "server"
+name = "ssu"
 path = "bin/server.rs"
 required-features = ["pty", "server"]

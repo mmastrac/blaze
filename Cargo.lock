@@ -3413,7 +3413,6 @@ dependencies = [
  "atomic-waker",
  "clap",
  "js-sys",
- "pollster",
  "pty-process",
  "raw_tty",
  "serialport",

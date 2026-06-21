@@ -163,7 +163,7 @@ impl ServerHandle {
         }
     }
 
-    fn lock(&self) -> MutexGuard<Server> {
+    fn lock(&self) -> MutexGuard<'_, Server> {
         self.server.lock().unwrap()
     }
 
@@ -247,6 +247,7 @@ pub async fn run_async(sessions: Vec<crate::session::SessionParts>) {
                         };
                     }
                     Err(e) => {
+                        trace!("Session recv error: {e}");
                         break;
                     }
                 }
@@ -552,8 +553,8 @@ impl ServerRead {
                             // end should have granted us more, but it's
                             // possible we've lost data on the line somewhere.
                             let mut buf = [0; MAX_COMMAND_LEN];
-                            // self.outgoing_command_queue_bytes
-                            //     .replace_with_slice(SSUOp::<0>::Verify(i).serialize(&mut buf).unwrap());
+                            self.outgoing_command_queue_bytes
+                                .replace_with_slice(SSUOp::<0>::Verify(i).serialize(&mut buf).unwrap());
                             continue; // 'read;
                         }
                     }

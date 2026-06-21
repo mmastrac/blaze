@@ -1,5 +1,8 @@
 use std::borrow::Cow;
-use std::num::{NonZeroU16, NonZeroU32};
+#[cfg(feature = "pty")]
+use std::num::NonZeroU16;
+#[cfg(feature = "serial")]
+use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -41,8 +44,10 @@ enum SessionSubcommand {
         /// Allocate a PTY for the process.
         #[arg(long, default_value_t = false)]
         no_pty: bool,
+        #[cfg(feature = "pty")]
         #[arg(long, default_value_t = NonZeroU16::new(24).unwrap(), conflicts_with = "no_pty")]
         rows: NonZeroU16,
+        #[cfg(feature = "pty")]
         #[arg(long, default_value_t = NonZeroU16::new(80).unwrap(), conflicts_with = "no_pty")]
         cols: NonZeroU16,
     },
@@ -107,7 +112,9 @@ impl FromStr for SessionConfig {
             SessionSubcommand::Exec {
                 command,
                 no_pty,
+                #[cfg(feature = "pty")]
                 rows,
+                #[cfg(feature = "pty")]
                 cols,
             } => {
                 if !no_pty {
