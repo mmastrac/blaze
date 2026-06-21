@@ -1,6 +1,7 @@
 use std::{
+    future::poll_fn,
     sync::{Arc, Mutex},
-    task::Context,
+    task::{Context, Poll},
 };
 
 use crate::server::WakerHandle;
@@ -176,44 +177,36 @@ impl<const SIZE: usize, T: Copy + Default> RingBuffer<SIZE, T> {
     }
 
     pub async fn push(this: &Arc<Mutex<Self>>, b: T) {
-        // Wait if buffer is full
-        loop {
-            let waker = {
-                let mut lock = this.lock().unwrap();
-                if !lock.is_full() {
-                    let write_index = lock.write_index;
-                    lock.buffer[write_index] = b;
-                    lock.write_index = (lock.write_index + 1) % lock.buffer.len();
-
-                    // Wake any waiting readers
-                    lock.read_waker.maybe_wake();
-                    return;
-                }
-                lock.write_waker.clone()
-            };
-            waker.wait().await;
-        }
+        poll_fn(|cx| {
+            let mut lock = this.lock().unwrap();
+            if !lock.is_full() {
+                let write_index = lock.write_index;
+                lock.buffer[write_index] = b;
+                lock.write_index = (write_index + 1) % SIZE;
+                lock.read_waker.maybe_wake();
+                return Poll::Ready(());
+            }
+            // Register before releasing the lock so a concurrent pop cannot
+            // miss the wake.
+            lock.write_waker.register(cx);
+            Poll::Pending
+        })
+        .await
     }
 
     pub async fn pop(this: &Arc<Mutex<Self>>) -> T {
-        // Wait if buffer is empty
-        loop {
-            let waker = {
-                let mut lock = this.lock().unwrap();
-                if !lock.is_empty() {
-                    // Pop the byte
-                    let b = lock.buffer[lock.read_index];
-                    lock.read_index = (lock.read_index + 1) % SIZE;
-
-                    // Wake any waiting writers
-                    lock.write_waker.maybe_wake();
-
-                    return b;
-                }
-                lock.read_waker.clone()
-            };
-            waker.wait().await;
-        }
+        poll_fn(|cx| {
+            let mut lock = this.lock().unwrap();
+            if !lock.is_empty() {
+                let b = lock.buffer[lock.read_index];
+                lock.read_index = (lock.read_index + 1) % SIZE;
+                lock.write_waker.maybe_wake();
+                return Poll::Ready(b);
+            }
+            lock.read_waker.register(cx);
+            Poll::Pending
+        })
+        .await
     }
 
     pub fn pop_sync(&mut self) -> Option<T> {
@@ -274,6 +267,11 @@ impl<const SIZE: usize, T: Copy + Default> RingBufferHandle<SIZE, T> {
         lock.is_empty()
     }
 
+    pub fn is_full(&self) -> bool {
+        let lock = self.buffer.lock().unwrap();
+        lock.is_full()
+    }
+
     pub fn pop_sync(&self) -> Option<T> {
         let mut lock = self.buffer.lock().unwrap();
         lock.pop_sync()
@@ -302,9 +300,80 @@ impl<const SIZE: usize, T: Copy + Default> RingBufferHandle<SIZE, T> {
 
 #[cfg(test)]
 mod tests {
+    use std::pin::pin;
+    use std::process;
+    use std::sync::{Arc, Barrier};
     use std::time::Duration;
 
     use super::*;
+
+    /// Fill to capacity, park a producer, drain exactly one byte, then stop.
+    /// The parked push must still complete without further consumer work.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn no_lost_wakeup_when_producer_idles() {
+        const SIZE: usize = 4;
+        let buffer = Arc::new(RingBufferHandle::<SIZE, u8>::new());
+
+        // In lieu of a proper test timeout...
+        tokio::task::spawn(async {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            eprintln!("no_lost_wakeup_when_producer_idles timed out");
+            _ = process::exit(1);
+        });
+
+        for b in 0..(SIZE - 1) {
+            buffer.push_sync(b as u8);
+        }
+        assert!(buffer.is_full());
+        let barrier1 = Arc::new(Barrier::new(2));
+        let barrier2 = Arc::new(Barrier::new(2));
+
+        let barrier1_clone = barrier1.clone();
+        let barrier2_clone = barrier2.clone();
+
+        let producer_buf = buffer.clone();
+        let producer = tokio::spawn(async move {
+            let mut fut = pin!(producer_buf.push(99));
+            let mut barrier1_waited = false;
+            let mut barrier2_waited = false;
+            poll_fn(|cx| {
+                if barrier1_waited && !barrier2_waited {
+                    barrier2_waited = true;
+                    barrier2_clone.wait();
+                }
+                let poll = fut.as_mut().poll(cx);
+                if poll.is_ready() {
+                    assert!(barrier1_waited && barrier2_waited);
+                    return poll;
+                }
+                if !barrier1_waited {
+                    barrier1_waited = true;
+                    barrier1_clone.wait();
+                }
+                Poll::Pending
+            })
+            .await;
+        });
+
+        barrier1.wait();
+        assert!(buffer.is_full(), "producer never blocked on a full buffer");
+
+        assert_eq!(buffer.pop_sync(), Some(0));
+        assert!(!buffer.is_full());
+
+        barrier2.wait();
+
+        tokio::time::timeout(Duration::from_secs(30), producer)
+            .await
+            .expect("producer timed out waiting for wake")
+            .expect("producer task panicked");
+
+        let mut drained = Vec::new();
+        while let Some(b) = buffer.pop_sync() {
+            drained.push(b);
+        }
+        assert_eq!(drained, vec![1, 2, 99]);
+    }
 
     #[tokio::test]
     async fn test_ring_buffer_one() {

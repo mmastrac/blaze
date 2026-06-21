@@ -303,7 +303,12 @@ impl WakerHandle {
     }
 
     pub fn register(&self, cx: &mut Context<'_>) {
-        self.waker.lock().unwrap().replace(cx.waker().clone());
+        let mut slot = self.waker.lock().unwrap();
+        debug_assert!(
+            slot.as_ref().map_or(true, |w| w.will_wake(cx.waker())),
+            "WakerHandle: second waiter registered; single-waiter invariant violated"
+        );
+        slot.replace(cx.waker().clone());
     }
 
     pub fn maybe_wake(&self) {
