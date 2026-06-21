@@ -242,7 +242,7 @@ pub async fn run_async(sessions: Vec<crate::session::SessionParts>) {
             loop {
                 match poll_fn(|cx| sread.poll_recv(cx)).await {
                     Ok(b) => {
-                        let Ok(_) = tx.blocking_send(b) else {
+                        let Ok(_) = tx.send(b).await else {
                             break;
                         };
                     }
