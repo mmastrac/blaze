@@ -325,7 +325,7 @@ impl<const OPEN_LEN: usize> SSUOp<OPEN_LEN> {
                 let credits = ((x as u16 & 0x1F) << 10)
                     | ((y as u16 & 0x1F) << 5)
                     | (z as u16 & 0x1F)
-                    | ((z5 as u16) << 11);
+                    | ((z5 as u16) << 15);
                 Ok(SSUOp::AddCredits {
                     session_id,
                     credits: credits as usize,
@@ -605,5 +605,27 @@ mod tests {
         .serialize(&mut buf)
         .unwrap();
         assert_eq!(msg, &[0x14, b'+', b'B', b'"', b'@', 0x1c]);
+    }
+
+    #[test]
+    fn add_credits_roundtrip() {
+        for n in 0u16..=u16::MAX {
+            let mut buf = [0u8; MAX_COMMAND_LEN];
+            let bytes = SSUOp::<MAX_LABEL_LEN>::AddCredits {
+                session_id: 0,
+                credits: n as usize,
+            }
+            .serialize(&mut buf)
+            .unwrap();
+            let parsed = SSUOp::<MAX_LABEL_LEN>::parse(bytes).unwrap();
+            assert_eq!(
+                parsed,
+                SSUOp::AddCredits {
+                    session_id: 0,
+                    credits: n as usize
+                },
+                "roundtrip failed for {n}"
+            );
+        }
     }
 }
