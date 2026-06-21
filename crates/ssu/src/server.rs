@@ -76,6 +76,7 @@ impl Server {
                 active_session_to_peer: None,
                 outgoing_command_queue: outgoing_command_queue.clone(),
                 outgoing_command_queue_bytes: Default::default(),
+                pending_escape: None,
                 server,
                 fairness_counter: 0,
                 sessions: array::from_fn(|_| RingBufferHandle::default()),
@@ -438,6 +439,8 @@ pub struct ServerRead {
 
     outgoing_command_queue: RingBufferHandle<PEER_COMMAND_QUEUE_SIZE, SSUOp<0>>,
     outgoing_command_queue_bytes: SyncRingBuffer<MAX_COMMAND_LEN, u8>,
+    /// When `Some`, the next byte to emit (the escaped letter after INTRO).
+    pending_escape: Option<u8>,
     fairness_counter: usize,
     server: ServerHandle,
 }
@@ -461,6 +464,10 @@ impl ServerRead {
         trace!("XON");
 
         'read: loop {
+            if let Some(b) = self.pending_escape.take() {
+                return Ok(b);
+            }
+
             // Outgoing commands jump the queue
             'command: loop {
                 if let Some(b) = self.outgoing_command_queue_bytes.pop() {
@@ -507,7 +514,7 @@ impl ServerRead {
                     if let Some(active) = self.active_session_to_peer {
                         self.fairness_counter = self.fairness_counter.saturating_sub(1);
                         match self.try_recv(active) {
-                            RecvResult::Data(b) => return Ok(b),
+                            RecvResult::Data(b) => return Ok(self.take_session_byte(b)),
                             RecvResult::NoData => {
                                 self.fairness_counter = 0;
                             }
@@ -538,14 +545,13 @@ impl ServerRead {
                                 self.outgoing_command_queue_bytes.replace_with_slice(
                                     SSUOp::<0>::Select(i).serialize(&mut buf).unwrap(),
                                 );
-                                // We already have this byte, so send it as part of
-                                // the command queue. This is valid because the
-                                // command queue is just straight bytes.
-                                self.outgoing_command_queue_bytes.push(b);
+                                // Session data follows the Select command and must
+                                // be DC4-escaped for the peer.
+                                self.push_encoded_session_byte(b);
                                 continue 'read;
                             }
                             trace!("Sending session {i} byte: {b:02X}");
-                            return Ok(b);
+                            return Ok(self.take_session_byte(b));
                         }
                         RecvResult::NoData => {}
                         RecvResult::NoCredits => {
@@ -553,8 +559,9 @@ impl ServerRead {
                             // end should have granted us more, but it's
                             // possible we've lost data on the line somewhere.
                             let mut buf = [0; MAX_COMMAND_LEN];
-                            self.outgoing_command_queue_bytes
-                                .replace_with_slice(SSUOp::<0>::Verify(i).serialize(&mut buf).unwrap());
+                            self.outgoing_command_queue_bytes.replace_with_slice(
+                                SSUOp::<0>::Verify(i).serialize(&mut buf).unwrap(),
+                            );
                             continue; // 'read;
                         }
                     }
@@ -606,6 +613,35 @@ impl ServerRead {
         match session.pop_sync() {
             Some(b) => RecvResult::Data(b),
             None => RecvResult::NoData,
+        }
+    }
+
+    fn encode_outbound(b: u8) -> Option<(u8, u8)> {
+        match b {
+            0x11 => Some((INTRO, b'Q')),
+            0x13 => Some((INTRO, b'S')),
+            INTRO => Some((INTRO, b'T')),
+            _ => None,
+        }
+    }
+
+    fn take_session_byte(&mut self, b: u8) -> u8 {
+        match Self::encode_outbound(b) {
+            Some((first, second)) => {
+                self.pending_escape = Some(second);
+                first
+            }
+            None => b,
+        }
+    }
+
+    fn push_encoded_session_byte(&mut self, b: u8) {
+        match Self::encode_outbound(b) {
+            Some((first, second)) => {
+                self.outgoing_command_queue_bytes.push(first);
+                self.outgoing_command_queue_bytes.push(second);
+            }
+            None => self.outgoing_command_queue_bytes.push(b),
         }
     }
 }
