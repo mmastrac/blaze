@@ -296,9 +296,6 @@ fn log_pixels_error(e: Error) {
         Error::UserDefined(e) => {
             error!("Graphics error: {}", e);
         }
-        Error::Surface(e) => {
-            error!("Graphics error: Surface: {}", e);
-        }
         _ => {
             error!("Graphics error: Unexpected error: {}", e);
         }
