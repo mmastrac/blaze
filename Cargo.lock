@@ -297,15 +297,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bit-set"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09ec2f926cc3060f09db9ebc5b52823d85268d24bb917e472c0c4bea35780a7d"
-dependencies = [
- "bit-vec 0.9.1",
-]
-
-[[package]]
 name = "bit-vec"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -316,15 +307,6 @@ name = "bit-vec"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e764a1d40d510daf35e07be9eb06e75770908c27d411ee6c92109c9840eaaf7"
-
-[[package]]
-name = "bit-vec"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b71798fca2c1fe1086445a7258a4bc81e6e49dcd24c8d0dd9a1e57395b603f51"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "bitflags"
@@ -343,15 +325,15 @@ name = "blaze-vt"
 version = "0.1.0"
 dependencies = [
  "axum",
- "bit-set 0.10.0",
  "bytemuck",
  "cargo-run-wasm",
  "clap",
  "console_error_panic_hook",
  "game-loop",
  "hex-literal",
- "i8051",
+ "i8051 0.22.0",
  "i8051-debug-tui",
+ "i8051-disassembler",
  "js-sys",
  "lk201",
  "paste",
@@ -1444,21 +1426,45 @@ checksum = "6d0953680eba7de6cd6045d58c33e6e84f335415d8f6890b4c3dfc6f883e7c4a"
 dependencies = [
  "bin_file",
  "bytemuck",
- "i8051-proc-macro",
+ "i8051-proc-macro 0.13.0",
+ "tracing",
+ "type-mapper",
+]
+
+[[package]]
+name = "i8051"
+version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7559c4b7eb960dc9e8741a44bb0a5789fe35e4d6f9fdef3e794969d15e33671f"
+dependencies = [
+ "bytemuck",
+ "i8051-proc-macro 0.22.0",
  "tracing",
  "type-mapper",
 ]
 
 [[package]]
 name = "i8051-debug-tui"
-version = "0.13.0"
+version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08901239fd1ae288202cbab4819bc40c3fe1886f743706d3d57a6cfc25c0a019"
+checksum = "74b0ccf8dbf041a4865ac761846f20f41dc4c04e231225aad08b9f72c6875389"
 dependencies = [
- "i8051",
+ "i8051 0.22.0",
  "ratatui",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "i8051-disassembler"
+version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62836a36988ea7b570efbcfd5529ae81b7b1d379db2238309d4a34466ae4d508"
+dependencies = [
+ "i8051 0.22.0",
+ "regex",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1466,6 +1472,17 @@ name = "i8051-proc-macro"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2331604457e265ab4aed8717fe0a97c6930cba0fcec0a485dc7024791ec7bf3"
+dependencies = [
+ "proc-macro2 1.0.106",
+ "quote 1.0.45",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "i8051-proc-macro"
+version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a50c0ad1ee10980290c289d0a306e8184347949cd509dc23d35d08d765a65c53"
 dependencies = [
  "proc-macro2 1.0.106",
  "quote 1.0.45",
@@ -1769,7 +1786,7 @@ checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 name = "lk201"
 version = "0.1.1"
 dependencies = [
- "i8051",
+ "i8051 0.13.0",
  "tracing",
  "tracing-subscriber",
 ]
@@ -2864,9 +2881,9 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.12.3"
+version = "1.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e10754a14b9137dd7b1e3e5b0493cc9171fdd105e0ab477f51b72e7f3ac0e276"
+checksum = "f1292b7759ae1cb9ec195452d1390a074f0cd8541ab7a5a8c31cd6db45d4a6ba"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -2887,9 +2904,9 @@ dependencies = [
 
 [[package]]
 name = "regex-syntax"
-version = "0.8.10"
+version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
+checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "relative-path"

@@ -11,8 +11,9 @@ pub enum KeyboardCommand {
     ToggleRun,
     ToggleHexMode,
     DumpVRAM,
-    #[cfg(feature = "pc-trace")]
-    TogglePCTrace,
+    /// Ctrl-G then `p`: flush `--pc-trace` file immediately
+    #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
+    FlushPCTrace,
     Quit,
 }
 
@@ -57,9 +58,9 @@ impl CrosstermKeyboard {
                         KeyCode::Char('d') => {
                             return Some(KeyboardCommand::DumpVRAM);
                         }
-                        #[cfg(feature = "pc-trace")]
+                        #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
                         KeyCode::Char('p') => {
-                            return Some(KeyboardCommand::TogglePCTrace);
+                            return Some(KeyboardCommand::FlushPCTrace);
                         }
                         _ => {}
                     }

@@ -9,7 +9,10 @@ use tracing::{Level, info};
 use std::time::Instant;
 
 mod host;
-mod machine;
+pub mod machine;
+
+#[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
+mod pc_trace;
 
 use i8051::Cpu;
 
@@ -106,6 +109,11 @@ struct Args {
     /// Machine type
     #[arg(long, default_value = "vt420")]
     machine: MachineType,
+
+    /// Write a ROM-sized code hit map (byte per ROM offset: 00 = not hit, 01 = hit); merges with existing file
+    #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
+    #[arg(long, value_name = "FILE")]
+    pc_trace: Option<PathBuf>,
 }
 
 fn parse_hex_address(s: &str) -> Result<u32, Box<dyn std::error::Error + Send + Sync>> {
@@ -265,7 +273,14 @@ fn run_vt420(
 
     info!("Configuring system...");
 
-    let vt420 = machine::vt420::System::new(rom, args.nvr.as_deref(), args.comm1, args.comm2)?;
+    let vt420 = machine::vt420::System::new(
+        rom,
+        args.nvr.as_deref(),
+        args.comm1,
+        args.comm2,
+        #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
+        args.pc_trace.as_deref(),
+    )?;
     let mut system = System::new(vt420);
 
     let breakpoints = &mut system.system.breakpoints;
@@ -284,6 +299,8 @@ fn run_vt420(
         for _ in 0..0x800_000_u64 {
             system.step(&mut cpu);
         }
+        #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
+        system.flush_pc_trace_if_due();
     }
 
     #[cfg(feature = "tui")]
@@ -298,9 +315,15 @@ fn run_vt420(
     };
 
     let instruction_count = if args.benchmark {
-        for _ in 0..100_000_000 {
+        for i in 0..100_000_000 {
             system.step(&mut cpu);
+            #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
+            if i & 0xFFFF == 0 {
+                system.flush_pc_trace_if_due();
+            }
         }
+        #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
+        system.flush_pc_trace_if_due();
         system.instruction_count
     } else {
         match args.display.unwrap_or(Display::Headless) {

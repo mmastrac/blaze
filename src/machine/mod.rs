@@ -7,6 +7,10 @@ pub mod vt52x;
 
 pub trait TerminalSystem: CpuContext {
     fn step(&mut self, cpu: &mut i8051::Cpu);
+
+    /// Periodic `--pc-trace` file flush (VT420 only; default no-op).
+    #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
+    fn flush_pc_trace_if_due(&mut self) {}
 }
 
 pub struct System<S: TerminalSystem> {
@@ -18,6 +22,11 @@ impl<S: TerminalSystem> System<S> {
     #[inline]
     pub fn step(&mut self, cpu: &mut i8051::Cpu) {
         self.system.step(cpu);
+    }
+
+    #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
+    pub fn flush_pc_trace_if_due(&mut self) {
+        self.system.flush_pc_trace_if_due();
     }
 
     pub fn new(system: S) -> Self {

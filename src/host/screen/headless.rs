@@ -28,6 +28,8 @@ pub fn run<S: TerminalSystem>(
                         let event = crossterm::event::read()?;
                         if debugger.handle_event(event, &mut cpu, &mut system) {
                             system.step(&mut cpu);
+                            #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
+                            system.flush_pc_trace_if_due();
                         }
                     }
                 }
@@ -39,11 +41,15 @@ pub fn run<S: TerminalSystem>(
                             let event = crossterm::event::read()?;
                             if debugger.handle_event(event, &mut cpu, &mut system) {
                                 system.step(&mut cpu);
+                                #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
+                                system.flush_pc_trace_if_due();
                                 debugger.render(&cpu, &mut system)?;
                             }
                         }
                     }
                     system.step(&mut cpu);
+                    #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
+                    system.flush_pc_trace_if_due();
                     if debugger.breakpoints().contains(&cpu.pc_ext(&system)) {
                         debugger.pause();
                     }
@@ -55,6 +61,8 @@ pub fn run<S: TerminalSystem>(
 
     loop {
         system.step(&mut cpu);
+        #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
+        system.flush_pc_trace_if_due();
     }
     Ok(system.instruction_count)
 }

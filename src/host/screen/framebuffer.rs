@@ -287,6 +287,10 @@ pub fn run(
                 }
             }
         }
+        #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
+        if let Some(trace) = &mut system.pc_trace {
+            trace.flush_if_due();
+        }
     };
 
     let system_clone = system.clone();
@@ -340,6 +344,10 @@ fn run_debugger(
             if debugger.breakpoints().contains(&cpu.pc_ext(system)) {
                 debugger.pause();
             }
+        }
+        #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
+        if let Some(trace) = &mut system.pc_trace {
+            trace.flush_if_due();
         }
     };
 

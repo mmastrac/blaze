@@ -1,5 +1,6 @@
 pub mod breakpoints;
 pub mod memory;
+pub mod static_analysis;
 pub mod video;
 
 use std::cell::Cell;
@@ -29,8 +30,8 @@ use lk201::LK201;
 
 use self::memory::{DiagnosticMonitor, Ports, RAM};
 
-#[cfg(feature = "pc-trace")]
-use bit_set::BitSet;
+#[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
+use crate::pc_trace::PcTrace;
 
 pub(crate) struct System {
     pub rom: ROM,
@@ -52,16 +53,21 @@ pub(crate) struct System {
     pub(crate) keyboard: LK201,
     pub(crate) breakpoints: Breakpoints,
 
-    #[cfg(feature = "pc-trace")]
-    pub(crate) pc_bitset: BitSet,
-    #[cfg(feature = "pc-trace")]
-    pub(crate) pc_bitset_current: BitSet,
+    #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
+    pub(crate) pc_trace: Option<PcTrace>,
 }
 
 impl TerminalSystem for System {
     #[inline]
     fn step(&mut self, cpu: &mut Cpu) {
         self.step(cpu);
+    }
+
+    #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
+    fn flush_pc_trace_if_due(&mut self) {
+        if let Some(trace) = &mut self.pc_trace {
+            trace.flush_if_due();
+        }
     }
 }
 
@@ -71,8 +77,10 @@ impl System {
         nvr: Option<&Path>,
         comm1: Option<SessionConfig>,
         comm2: Option<SessionConfig>,
+        #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))] pc_trace: Option<&Path>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         info!("Loading ROM into memory...");
+        let rom_len = rom.len();
         let rom = ROM::new(rom);
 
         info!("Configuring video processor...");
@@ -135,6 +143,13 @@ impl System {
             memory.nvr.mem[..initial_nvr.len()].copy_from_slice(&initial_nvr);
         }
 
+        #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
+        let pc_trace = if let Some(path) = pc_trace {
+            Some(PcTrace::new(path.to_path_buf(), rom_len)?)
+        } else {
+            None
+        };
+
         Ok(Self {
             instruction_count: 0,
             memory,
@@ -152,10 +167,8 @@ impl System {
             default: DefaultPortMapper::default(),
             keyboard: LK201::new(in_kbd.clone(), out_kbd),
             breakpoints: Breakpoints::new(),
-            #[cfg(feature = "pc-trace")]
-            pc_bitset: BitSet::with_capacity(0x10000),
-            #[cfg(feature = "pc-trace")]
-            pc_bitset_current: BitSet::with_capacity(0x10000),
+            #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
+            pc_trace,
         })
     }
 
@@ -175,6 +188,9 @@ impl System {
         //     info!("PC = 0x928, phase = {:?}, flag = {flag}", self.video_row.sync.sync_gen.borrow().phase());
         // }
 
+        #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
+        let pc_trace_insn_len = self.pc_trace.as_ref().map(|_| cpu.decode(self, pc).len());
+
         let prev_0x1f = cpu.internal_ram[0x1f];
         cpu.step(self);
         let new_0x1f = cpu.internal_ram[0x1f];
@@ -185,9 +201,9 @@ impl System {
             );
         }
 
-        #[cfg(feature = "pc-trace")]
-        {
-            self.pc_bitset.insert(pc as usize);
+        #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
+        if let (Some(trace), Some(insn_len)) = (&mut self.pc_trace, pc_trace_insn_len) {
+            trace.mark_range(pc, insn_len);
         }
 
         self.memory.tick();
@@ -374,6 +390,8 @@ mod tests {
             None,
             Some(SessionConfig::default()),
             Some(SessionConfig::default()),
+            #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
+            None,
         )
         .unwrap();
 

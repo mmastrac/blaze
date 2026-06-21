@@ -320,8 +320,6 @@ fn run_inner(
 ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
     let mut running = true;
     let mut hex = DisplayMode::Normal;
-    #[cfg(feature = "pc-trace")]
-    let mut pc_trace = false;
     let mut keyboard = CrosstermKeyboard::default();
     let mut terminal = ratatui::Terminal::new(CrosstermBackend::new(io::stdout()))?;
     loop {
@@ -362,22 +360,10 @@ fn run_inner(
                     Some(KeyboardCommand::DumpVRAM) => {
                         fs::write("/tmp/vram.bin", &system.memory.vram[0..])?;
                     }
-                    #[cfg(feature = "pc-trace")]
-                    Some(KeyboardCommand::TogglePCTrace) => {
-                        use std::fs::File;
-                        use std::io::Write;
-                        if !pc_trace {
-                            system.pc_bitset_current = system.pc_bitset.clone();
-                            pc_trace = true;
-                            let mut pc_trace_file = File::create("/tmp/pc_trace.txt")?;
-                            writeln!(pc_trace_file, "PC trace started")?;
-                        } else {
-                            let difference = system.pc_bitset.difference(&system.pc_bitset_current);
-                            let mut pc_trace_file = File::create("/tmp/pc_trace.txt")?;
-                            for pc in difference {
-                                writeln!(pc_trace_file, "0x{:04X}", pc)?;
-                            }
-                            pc_trace = false;
+                    #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
+                    Some(KeyboardCommand::FlushPCTrace) => {
+                        if let Some(trace) = &mut system.pc_trace {
+                            trace.flush_now()?;
                         }
                     }
                     Some(KeyboardCommand::Quit) => {
@@ -452,6 +438,11 @@ fn run_inner(
                     }
                 })?;
             }
+        }
+
+        #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
+        if let Some(trace) = &mut system.pc_trace {
+            trace.flush_if_due();
         }
     }
     Ok(system.instruction_count)
