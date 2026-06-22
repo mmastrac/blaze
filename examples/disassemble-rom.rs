@@ -72,6 +72,8 @@ fn main() -> io::Result<()> {
     let mut db = auto_analyze(info, args.verbose)?;
     process_heuristics(&mut db, maybe_pc_trace)?;
 
+    i8051_disassembler::analysis::graph::leiden_communities(&db);
+
     write_bank_asm(&db, Bank::Bank0, &args.output.join("bank0.asm"))?;
     write_bank_asm(&db, Bank::Bank1, &args.output.join("bank1.asm"))?;
 

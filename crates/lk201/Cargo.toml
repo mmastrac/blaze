@@ -10,7 +10,7 @@ readme = "README.md"
 
 [dependencies]
 tracing = "0.1.41"
-i8051 = { version = "0.13.0", optional = true }
+i8051 = { workspace = true, optional = true }
 
 [dev-dependencies]
 tracing = "0.1.41"
