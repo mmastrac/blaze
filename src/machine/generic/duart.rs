@@ -203,7 +203,8 @@ impl DUART {
                 channel_a_tx_pending: None,
                 channel_b_rx_pending: Cell::new(None),
                 channel_b_tx_pending: None,
-                input_bits: 0,
+                // IP5 = Printer DSR, active low. Zero means attached.
+                input_bits: 1 << 5,
                 output_bits_inv: 0,
                 interrupt: false,
                 interrupt_mask: 0,
