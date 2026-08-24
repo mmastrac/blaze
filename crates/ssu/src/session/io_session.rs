@@ -129,6 +129,17 @@ fn start(
                 loop {
                     match reader.read_exact(&mut buf) {
                         Ok(_) => {}
+                        // TimedOut just means the line is idle.
+                        Err(e)
+                            if matches!(
+                                e.kind(),
+                                io::ErrorKind::TimedOut
+                                    | io::ErrorKind::WouldBlock
+                                    | io::ErrorKind::Interrupted
+                            ) =>
+                        {
+                            continue;
+                        }
                         Err(e) => {
                             match tx.send(Err(e)) {
                                 Ok(()) => {}
