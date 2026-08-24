@@ -1,4 +1,4 @@
-use std::{io, num::NonZeroU32, path::PathBuf, thread};
+use std::{io, num::NonZeroU32, path::PathBuf, thread, time::Duration};
 
 use serialport::{DataBits, FlowControl, StopBits};
 
@@ -43,6 +43,8 @@ impl SerialConfig {
             .data_bits(data_bits)
             .stop_bits(stop_bits)
             .flow_control(flow_control)
+            // The default timeout returns immediately on an idle line.
+            .timeout(Duration::from_millis(50))
             .open()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
             .unwrap();
