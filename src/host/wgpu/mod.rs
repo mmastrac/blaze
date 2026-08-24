@@ -156,7 +156,8 @@ impl ApplicationHandler<Pixels<'static>> for Terminal {
                         self.frame_policy.on_presented();
                     }
                 }
-                _ => unreachable!(),
+                // The surface may not exist yet. Render when it does.
+                _ => {}
             }
         }
         let idle = self.frame_policy.plan_idle();
