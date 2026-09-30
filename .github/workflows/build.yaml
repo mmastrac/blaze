@@ -35,7 +35,7 @@ jobs:
       - name: Build all features
         run: cargo build --locked --workspace --all-targets --all-features
       - name: Test
-        run: cargo test --locked --workspace
+        run: cargo test --locked --workspace --all-features
 
   wasm:
     runs-on: ubuntu-latest
