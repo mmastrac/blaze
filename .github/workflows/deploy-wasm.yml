@@ -24,7 +24,14 @@ jobs:
           toolchain: 1.92.0
       - name: Install WASM target
         run: rustup target add wasm32-unknown-unknown
+      - name: Cache Termtris WASM
+        id: termtris-cache
+        uses: actions/cache@v4
+        with:
+          path: examples/wasm/termtris/build
+          key: termtris-wasm-${{ hashFiles('examples/wasm/termtris/build.sh', 'examples/wasm/termtris/wasm.c', 'examples/wasm/termtris/termtris/src/**') }}
       - name: Build Termtris WASM
+        if: steps.termtris-cache.outputs.cache-hit != 'true'
         run: |
           sudo apt-get install emscripten
           ./examples/wasm/termtris/build.sh
