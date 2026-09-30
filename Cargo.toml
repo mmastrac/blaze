@@ -5,7 +5,6 @@ resolver = "2"
 [workspace.dependencies]
 i8051 = "0.25.0"
 i8051-debug-tui = "0.25.0"
-i8051-disassembler = "0.25.0"
 
 [package]
 name = "blaze-vt"
@@ -24,7 +23,6 @@ bytemuck = { version = "1.24", features = ["derive"] }
 paste = "1"
 i8051.workspace = true
 i8051-debug-tui = { workspace = true, optional = true }
-i8051-disassembler.workspace = true
 tracing = "0.1.41"
 tracing-subscriber = "0.3.20"
 hex-literal = "1.1"
@@ -58,7 +56,6 @@ rstest = "0.26"
 axum = "0.8.7"
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.7.0", features = ["fs"] }
-i8051-disassembler = { workspace = true, features = ["analysis"] }
 
 [profile.release]
 debug = true
@@ -85,9 +82,6 @@ web-sys = { version = "0.3.82", features = ["GpuTextureFormat", "Window", "Docum
 js-sys = { version = "0.3.82", features = [] }
 
 [[example]]
-name = "disassemble-rom"
-
-[[example]]
 name = "run-wasm"
 required-features = ["run-wasm"]
 
@@ -99,5 +93,4 @@ required-features = ["run-wasm"]
 # [patch.crates-io]
 # i8051 = { path = "../i8051/crates/i8051" }
 # i8051-debug-tui = { path = "../i8051/crates/i8051-debug-tui" }
-# i8051-disassembler = { path = "../i8051/crates/i8051-disassembler" }
 # i8051-proc-macro = { path = "../i8051/crates/i8051-proc-macro" }

@@ -1,7 +1,6 @@
 pub mod breakpoints;
 pub mod framebuffer;
 pub mod memory;
-pub mod static_analysis;
 mod text;
 pub mod unicode;
 pub mod video;
