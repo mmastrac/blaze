@@ -289,15 +289,14 @@ impl LK201Command {
                 keycode: 0,
             },
             LK201Command::RequestId => LK201Response::KeyboardId {
-                firmware_id: 0x01, // Firmware version
-                hardware_id: 0x01, // 1 = LK201, 2 = LK401, 3 = LK443, 4 = LK421
+                firmware_id: 0x01, // Keyboard type: 1 = LK201, 2 = LK401, 3 = LK443, 4 = LK421
+                hardware_id: 0x01,
             },
 
             // Mode change commands return ModeChangeAck (0xBA)
             // "Upon successful receipt of the command, the LK201 responds with LK_MODECHG_ACK"
             LK201Command::SetMode { .. } => LK201Response::ModeChangeAck,
             LK201Command::SetModeWithAutoRepeat { .. } => LK201Response::ModeChangeAck,
-            LK201Command::TempNoRepeat => LK201Response::ModeChangeAck,
             LK201Command::SetDefaults => LK201Response::ModeChangeAck,
 
             // Special control commands with specific acks
@@ -613,7 +612,7 @@ impl LK201Response {
     }
 }
 
-/// Keyboard type IDs (returned in byte 1 of KeyboardId response)
+/// Keyboard type IDs (returned in the first byte of the KeyboardId response)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyboardType {
     /// LK201 keyboard
@@ -880,6 +879,7 @@ mod tests {
         assert!(LK201Command::BellEnable(Volume(4)).response().is_none());
         assert!(LK201Command::KeyClickDisable.response().is_none());
         assert!(LK201Command::Resume.response().is_none());
+        assert!(LK201Command::TempNoRepeat.response().is_none());
     }
 
     #[test]

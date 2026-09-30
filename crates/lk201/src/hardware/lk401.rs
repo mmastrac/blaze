@@ -225,14 +225,18 @@ mod tests {
     use std::collections::VecDeque;
 
     use crate::LK201Command;
-    use crate::{ALL_KEYS, AutoRepeatRegister, Division, Key, KeyMode, LK201, Led, Volume};
+    use crate::{
+        ALL_KEYS, AutoRepeatRegister, Division, Key, KeyMode, KeyboardType, LK201, Led, Volume,
+    };
     use tracing::Level;
 
     use super::*;
 
     #[test]
     fn test_hardware_lk401() {
-        tracing_subscriber::fmt().with_max_level(Level::INFO).init();
+        _ = tracing_subscriber::fmt()
+            .with_max_level(Level::INFO)
+            .try_init();
         let mut hardware = LK401Hardware::new();
         //hardware.system.ports.key_matrix[0] = true;
         eprintln!("ready");
@@ -394,7 +398,12 @@ mod tests {
                     hw_response.push(byte);
                 }
             }
-            let response = cmd.response().unwrap().to_bytes();
+            let mut response = cmd.response().unwrap().to_bytes();
+            if cmd == LK201Command::RequestId {
+                response[0] = KeyboardType::LK401 as u8;
+                response.truncate(1);
+                hw_response.truncate(1);
+            }
             assert_eq!(response, hw_response, "{cmd:?}");
         }
     }

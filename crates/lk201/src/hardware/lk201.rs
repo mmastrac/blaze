@@ -302,7 +302,9 @@ mod tests {
 
     #[test]
     fn test_hardware() {
-        tracing_subscriber::fmt().with_max_level(Level::INFO).init();
+        _ = tracing_subscriber::fmt()
+            .with_max_level(Level::INFO)
+            .try_init();
         let mut hardware = LK201Hardware::new();
 
         for _ in 0..0x1000 {
