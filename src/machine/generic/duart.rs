@@ -98,6 +98,7 @@ impl TryFrom<u8> for WriteRegister {
     }
 }
 
+#[allow(dead_code)]
 const READ_2681: &[&str] = &[
     "Mode Register A (MR1A, MR2A)",
     "Status Register A (SRA)",
@@ -117,6 +118,7 @@ const READ_2681: &[&str] = &[
     "Stop Counter Command",
 ];
 
+#[allow(dead_code)]
 const WRITE_2681: &[&str] = &[
     "Mode Register A (MR1A, MR2A)",
     "Clock Select Register A (CSRA)",

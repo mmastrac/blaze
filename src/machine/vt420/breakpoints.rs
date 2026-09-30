@@ -1,9 +1,7 @@
 use i8051::breakpoint::{Action, Breakpoints};
 use tracing::Level;
 
-use crate::machine::generic::rom::ROM;
-
-pub(crate) const BREAKPOINTS: &[(u32, &str)] = &[
+pub const BREAKPOINTS: &[(u32, &str)] = &[
     (0x0, "Interrupt: CPU reset"),
     (0x10000, "Interrupt: CPU reset"),
     (0x000B, "Interrupt: Timer0"),
@@ -63,7 +61,7 @@ pub(crate) const BREAKPOINTS: &[(u32, &str)] = &[
     (0x05A59, "NVR fail 4"),
 ];
 
-pub(crate) fn create_breakpoints(breakpoints: &mut Breakpoints, code: &ROM) {
+pub fn create_breakpoints(breakpoints: &mut Breakpoints) {
     for &(addr, message) in BREAKPOINTS {
         breakpoints.add(true, addr, Action::Log(Level::INFO, message.into()));
     }

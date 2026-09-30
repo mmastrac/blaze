@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 mod host;
 pub mod machine;
 

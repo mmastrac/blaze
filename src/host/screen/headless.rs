@@ -1,3 +1,4 @@
+#[cfg(feature = "tui")]
 use std::time::Duration;
 
 use i8051::Cpu;
@@ -71,5 +72,4 @@ pub fn run<S: TerminalSystem>(
             std::process::exit(code);
         }
     }
-    Ok(system.instruction_count)
 }

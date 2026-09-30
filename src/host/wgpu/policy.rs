@@ -8,9 +8,11 @@ use winit::event_loop::ControlFlow;
 
 const UPDATE_FPS: u32 = 60;
 const RENDER_FPS: u32 = 30;
+#[allow(dead_code)]
 const IDLE_RENDER_FPS: u32 = 2;
 const UPDATE_STEP: Duration = Duration::from_micros(1_000_000 / UPDATE_FPS as u64);
 const RENDER_STEP: Duration = Duration::from_micros(1_000_000 / RENDER_FPS as u64);
+#[allow(dead_code)]
 const IDLE_RENDER_STEP: Duration = Duration::from_micros(1_000_000 / IDLE_RENDER_FPS as u64);
 
 /// What to do at end-of-cycle (`about_to_wait`)
@@ -36,6 +38,7 @@ pub struct FramePolicy {
     pub will_redraw: bool,
     pub updates_to_run: u32,
 
+    #[allow(dead_code)]
     idle_render_enabled: bool,
 }
 
@@ -62,6 +65,7 @@ impl FramePolicy {
     }
 
     /// Call on resume/start to avoid huge catch-up steps.
+    #[allow(dead_code)]
     pub fn reset(&mut self) {
         let now = Instant::now();
         self.next_update = now + self.update_step;
@@ -69,6 +73,7 @@ impl FramePolicy {
     }
 
     /// Turn idle rendering on/off (hook up later to inactivity detection).
+    #[allow(dead_code)]
     pub fn set_idle_render_enabled(&mut self, enabled: bool) {
         self.idle_render_enabled = enabled;
         if enabled {
@@ -76,7 +81,7 @@ impl FramePolicy {
         }
     }
 
-    pub fn plan_tick(&mut self, cause: winit::event::StartCause) {
+    pub fn plan_tick(&mut self, _cause: winit::event::StartCause) {
         let now = Instant::now();
         let mut updates = 0;
 

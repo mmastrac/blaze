@@ -1,6 +1,9 @@
+use std::cell::RefCell;
+#[cfg(all(feature = "vram-dump", feature = "tui"))]
+use std::io::Write;
 use std::rc::Rc;
+#[cfg(feature = "tui")]
 use std::time::Duration;
-use std::{cell::RefCell, io::Write};
 
 use i8051::Cpu;
 #[cfg(feature = "tui")]
@@ -9,6 +12,7 @@ use i8051_debug_tui::{Debugger, DebuggerState};
 use ratatui::crossterm;
 #[cfg(feature = "tui")]
 use ratatui::crossterm::event::KeyModifiers;
+#[cfg(all(feature = "vram-dump", feature = "tui"))]
 use tracing::info;
 
 use crate::machine::TerminalSystem;

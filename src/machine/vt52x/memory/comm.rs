@@ -106,6 +106,7 @@ impl RAM {
         self.update_int1();
     }
 
+    #[allow(dead_code)]
     pub(super) fn comm_write(&mut self, reg: u8, value: u8) {
         for ch in 0..3 {
             let regs = &COMM_REGS[ch];
@@ -190,6 +191,7 @@ impl RAM {
         self.int1 = (0..3).any(|ch| self.comm_int_cause(ch) & self.comm[ch].int_enable != 0);
     }
 
+    #[allow(dead_code)]
     pub(super) fn comm_read(&self, r: u8, mut v: u8) -> u8 {
         for (ch, regs) in COMM_REGS.iter().enumerate() {
             if r == regs.rx_status {
@@ -214,6 +216,7 @@ impl RAM {
         v
     }
 
+    #[allow(dead_code)]
     fn vt51x_transmit(&mut self, ch: usize) {
         let byte_time = self.vt51x_byte_instructions(ch);
         let chan = &mut self.comm[ch];

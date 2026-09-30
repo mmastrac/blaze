@@ -152,14 +152,6 @@ fn locking_shift_left(n: u8) -> &'static [u8] {
     }
 }
 
-fn single_shift_left(n: u8) -> &'static [u8] {
-    match n {
-        2 => b"\x1bN",
-        3 => b"\x1bO",
-        _ => unreachable!(),
-    }
-}
-
 fn main() {
     let mut selected = Vec::new();
     for arg in std::env::args().skip(1) {

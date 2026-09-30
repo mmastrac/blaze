@@ -11,7 +11,6 @@ use tracing::trace;
 
 use crate::machine::generic::duart::{DUART, ReadRegister, WriteRegister};
 use crate::machine::generic::nvr::Nvr;
-use crate::machine::generic::rom::ROM;
 use crate::machine::generic::vsync::SyncGen;
 use crate::machine::vt420::video::{Mapper, TIMING_60HZ, TIMING_70HZ};
 
@@ -86,10 +85,10 @@ impl Ports {
 
 impl PortMapper for Ports {
     type WriteValue = (u8, u8);
-    fn interest<C: CpuView>(&self, cpu: &C, addr: u8) -> bool {
+    fn interest<C: CpuView>(&self, _cpu: &C, addr: u8) -> bool {
         addr == SFR_P2 || addr == SFR_P3 || addr == SFR_P1
     }
-    fn read<C: CpuView>(&self, cpu: &C, addr: u8) -> u8 {
+    fn read<C: CpuView>(&self, _cpu: &C, addr: u8) -> u8 {
         if addr == SFR_P3 {
             // trace!("P3 read {:02X} @ {:X}", self.p3_read, cpu.pc_ext());
         }
@@ -100,7 +99,7 @@ impl PortMapper for Ports {
             _ => unreachable!(),
         }
     }
-    fn read_latch<C: CpuView>(&self, cpu: &C, addr: u8) -> u8 {
+    fn read_latch<C: CpuView>(&self, _cpu: &C, addr: u8) -> u8 {
         if addr == SFR_P3 {
             // trace!("P3 read latch {:02X} @ {:X}", self.p3, cpu.pc_ext());
         }
@@ -145,10 +144,10 @@ impl Default for DiagnosticMonitor {
 
 impl PortMapper for DiagnosticMonitor {
     type WriteValue = (u8, u8);
-    fn interest<C: CpuView>(&self, cpu: &C, addr: u8) -> bool {
+    fn interest<C: CpuView>(&self, _cpu: &C, addr: u8) -> bool {
         addr == 0x1f || addr == 0x7e
     }
-    fn read<C: CpuView>(&self, cpu: &C, addr: u8) -> u8 {
+    fn read<C: CpuView>(&self, _cpu: &C, addr: u8) -> u8 {
         self.ram[addr as usize]
     }
     fn prepare_write<C: CpuView>(&self, cpu: &C, addr: u8, value: u8) -> Self::WriteValue {

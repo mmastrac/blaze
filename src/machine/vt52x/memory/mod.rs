@@ -74,7 +74,7 @@ impl MemoryMapper for RAM {
             0xFF
         }
     }
-    fn prepare_write<C: CpuView>(&self, cpu: &C, addr: u32, value: u8) -> Self::WriteValue {
+    fn prepare_write<C: CpuView>(&self, _cpu: &C, addr: u32, value: u8) -> Self::WriteValue {
         (addr, value)
     }
     fn write(&mut self, value: Self::WriteValue) {

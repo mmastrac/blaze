@@ -1,6 +1,7 @@
 pub mod breakpoints;
 pub mod framebuffer;
 pub mod memory;
+#[cfg(feature = "tui")]
 mod text;
 pub mod unicode;
 pub mod video;
@@ -39,7 +40,7 @@ use self::memory::{DiagnosticMonitor, Ports, RAM};
 #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
 use crate::pc_trace::PcTrace;
 
-pub(crate) struct System {
+pub struct System {
     pub rom: ROM,
     pub memory: RAM,
     pub instruction_count: usize,
@@ -100,7 +101,7 @@ impl ScriptHost for System {
 }
 
 impl System {
-    pub(crate) fn new(
+    pub fn new(
         rom: Vec<u8>,
         nvr: Option<&Path>,
         comm1: Option<SessionPartsUnsend>,
@@ -108,6 +109,7 @@ impl System {
         #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))] pc_trace: Option<&Path>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         info!("Loading ROM into memory...");
+        #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
         let rom_len = rom.len();
         let rom = ROM::new(rom);
 

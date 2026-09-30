@@ -35,18 +35,17 @@ pub struct System {
     serial: Serial,
     default: DefaultPortMapper,
     in_kbd: mpsc::Sender<u8>,
-    out_kbd: mpsc::Receiver<u8>,
     ports: Ports,
 }
 
 impl System {
     pub fn new(
         rom: Vec<u8>,
-        nvr: Option<&Path>,
-        comm1: Option<SessionPartsUnsend>,
-        comm2: Option<SessionPartsUnsend>,
+        _nvr: Option<&Path>,
+        _comm1: Option<SessionPartsUnsend>,
+        _comm2: Option<SessionPartsUnsend>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let (serial, in_kbd, out_kbd) = Serial::new(60);
+        let (serial, in_kbd, _out_kbd) = Serial::new(60);
         let model = rom_model(&rom);
         let rom = ROM::new(rom);
         let mut ports = Ports::new(rom.bank.clone());
@@ -60,7 +59,6 @@ impl System {
             serial,
             default: Default::default(),
             in_kbd,
-            out_kbd,
             ports,
         })
     }

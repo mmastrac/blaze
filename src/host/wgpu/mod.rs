@@ -5,10 +5,6 @@ use crate::machine::generic::display::{FRAME_HEIGHT, FRAME_WIDTH};
 
 pub const REAL_WIDTH: u32 = FRAME_WIDTH as u32;
 pub const REAL_HEIGHT: u32 = FRAME_HEIGHT as u32;
-// TODO: Waiting on pixels to support non-square aspect ratios
-pub const ASPECT_RATIO: f64 = 4.0 / 3.0;
-pub const WINDOW_WIDTH: u32 = REAL_WIDTH as u32;
-pub const WINDOW_HEIGHT: u32 = (REAL_WIDTH as f64 / ASPECT_RATIO as f64) as u32;
 
 use pixels::{Error, Pixels, PixelsBuilder, SurfaceTexture};
 use std::sync::Arc;
@@ -45,8 +41,6 @@ struct Terminal {
     pixels: PixelsState,
     /// Event manager.
     input: WinitInputHelper,
-    /// Game pause state.
-    paused: bool,
     /// Window title.
     title: String,
     /// Keyboard input.
@@ -70,7 +64,6 @@ impl Terminal {
         Self {
             pixels: PixelsState::None(proxy),
             input: WinitInputHelper::new(),
-            paused: false,
             frame_policy: FramePolicy::new(),
             title,
             keyboard,
@@ -110,6 +103,7 @@ impl Terminal {
         let PixelsState::None(proxy) = &mut self.pixels else {
             return;
         };
+        #[cfg_attr(not(target_arch = "wasm32"), allow(unused_variables))]
         let proxy = proxy.clone();
         let window = Arc::new(window);
         self.pixels = PixelsState::Initializing {
@@ -331,6 +325,7 @@ pub fn main(
         .build()
         .map_err(|e| Error::UserDefined(Box::new(e)))?;
     let proxy = event_loop.create_proxy();
+    #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
     let mut terminal = Terminal::new(
         title.to_string(),
         keyboard,
@@ -361,10 +356,8 @@ fn get_canvas(#[allow(unused)] window: &winit::window::Window) -> web_sys::HtmlC
 
 #[cfg(target_arch = "wasm32")]
 pub async fn attach_canvas(window: &Arc<winit::window::Window>) {
-    use js_sys::Promise;
     use wasm_bindgen::JsCast;
     use wasm_bindgen::closure::Closure;
-    use wasm_bindgen_futures::JsFuture;
 
     let canvas = get_canvas(&window);
 

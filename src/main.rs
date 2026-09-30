@@ -310,7 +310,7 @@ fn run_vt420(
 
     let breakpoints = &mut system.system.breakpoints;
     if args.log {
-        create_breakpoints(breakpoints, &system.system.rom);
+        create_breakpoints(breakpoints);
     }
 
     info!("Starting CPU execution...");
@@ -340,10 +340,10 @@ fn run_vt420(
     };
 
     let instruction_count = if args.benchmark {
-        for i in 0..100_000_000 {
+        for _i in 0..100_000_000 {
             system.step(&mut cpu);
             #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
-            if i & 0xFFFF == 0 {
+            if _i & 0xFFFF == 0 {
                 system.flush_pc_trace_if_due();
             }
         }
@@ -448,8 +448,6 @@ fn run_vt52x(
 
     info!("Starting CPU execution...");
     let mut cpu = Cpu::new();
-    #[cfg(not(target_arch = "wasm32"))]
-    let start_time = Instant::now();
     info!("CPU initialized, PC = 0x{:04X}", cpu.pc_ext(&system));
 
     #[cfg(feature = "tui")]
@@ -463,24 +461,26 @@ fn run_vt52x(
         None
     };
 
-    let instruction_count = if args.benchmark {
+    if args.benchmark {
         for _ in 0..100_000_000 {
             system.step(&mut cpu);
         }
-        system.instruction_count
     } else {
         match args.display.unwrap_or(Display::Headless) {
-            Display::Headless => host::screen::headless::run(
-                system,
-                cpu,
-                #[cfg(feature = "tui")]
-                debugger,
-            )?,
+            Display::Headless => {
+                host::screen::headless::run(
+                    system,
+                    cpu,
+                    #[cfg(feature = "tui")]
+                    debugger,
+                )?;
+            }
+            #[allow(unreachable_patterns)]
             _ => {
                 unimplemented!()
             }
         }
-    };
+    }
 
     Ok(())
 }

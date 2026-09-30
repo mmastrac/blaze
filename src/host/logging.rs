@@ -1,3 +1,4 @@
+#[cfg(feature = "tui")]
 use std::fs::File;
 use std::io::{IsTerminal, stdout};
 
@@ -5,6 +6,7 @@ use tracing_subscriber::filter::{LevelFilter, Targets};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
+#[cfg(feature = "tui")]
 pub fn setup_logging_file(level: tracing::Level) {
     let tempdir = std::env::temp_dir();
     let logfile = tempdir.join("blaze-vt.log");

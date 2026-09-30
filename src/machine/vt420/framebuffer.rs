@@ -27,10 +27,10 @@ impl Display for System {
             ..Default::default()
         };
         let mut font = [0_u16; 16];
-        let render = decode_vram(
+        decode_vram(
             &self.memory.vram[self.memory.display_mapper.vram_offset_display() as usize..],
             &self.memory.display_mapper,
-            |render, row, attr, row_flags| {
+            |render, row, _attr, row_flags| {
                 render.row += render.row_flags.row_height as usize;
                 render.row_offset += 800 * 4 * render.row_flags.row_height as usize;
                 render.row_flags = row_flags;
@@ -205,7 +205,7 @@ impl Display for System {
         decode_vram(
             vram,
             mapper,
-            |render, row, attr, row_flags| {
+            |render, row, _attr, row_flags| {
                 render.row_idx = row as usize;
                 render.row_flags = row_flags;
 

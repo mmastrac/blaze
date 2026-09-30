@@ -285,7 +285,7 @@ pub struct RowFlags {
 }
 
 /// Flags for each cell: from the row and both character attribute locations.
-pub struct CellFlags(u8, u8, u8);
+pub struct CellFlags(u8, u8, #[allow(dead_code)] u8);
 
 impl CellFlags {
     pub fn is_underline(&self) -> bool {
