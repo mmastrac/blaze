@@ -1,0 +1,5 @@
+# Power-on self-test passed
+00000: wait_instructions 9850880
+0A8BC: expect "VT420 OK"
+0A8BC: screenshot "docs/screenshot-1.png"
+0A8BC: exit 0

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "i8051": {
+      "command": "/Users/matt/Documents/github/i8051/target/debug/i8051-disassembler-mcp",
+      "args": [
+        "serve",
+        "/Users/matt/Documents/github/vt-emulator/roms/vt510/vt510.dsl",
+        "--diff",
+        "/Users/matt/Documents/github/vt-emulator/roms/vt510/vt510.diff.dsl"
+      ]
+    }
+  }
+}

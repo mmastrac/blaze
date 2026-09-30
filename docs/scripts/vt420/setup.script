@@ -1,0 +1,8 @@
+# Set-Up screen after pressing F3
+00000: wait_instructions 9850880
+0A8BC: expect "VT420 OK"
+0A8BC: keyboard "\x58"   # LK201 F3
+0A8BC: wait_instructions 1000000
+0A8BC: expect "Set-Up=English"
+0A8BC: screenshot "docs/screenshot-setup.png"
+0A8BC: exit 0
