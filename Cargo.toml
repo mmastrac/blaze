@@ -3,9 +3,9 @@ members = ["crates/lk201", "crates/ssu"]
 resolver = "2"
 
 [workspace.dependencies]
-i8051 = "0.24.0"
-i8051-debug-tui = "0.24.0"
-i8051-disassembler = "0.24.0"
+i8051 = "0.25.0"
+i8051-debug-tui = "0.25.0"
+i8051-disassembler = "0.25.0"
 
 [package]
 name = "blaze-vt"

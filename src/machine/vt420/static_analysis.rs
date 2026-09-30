@@ -9,7 +9,8 @@ use i8051_disassembler::pattern::BytePattern;
 use i8051_disassembler::{
     address::{AddressSpace, PhysicalAddr},
     db::{DataType, Db, Equivalent, Function},
-    region::Region,
+    platform::i8051::CODE,
+    region::{LabelAttrs, Region},
 };
 
 const BANK_SIZE: usize = 0x1_0000;
@@ -113,7 +114,7 @@ pub fn load_rom(
     let mut info = RomStaticAnalysisInfo::default();
 
     let db = &mut info.db;
-    let region = db.region_mut(AddressSpace::Code);
+    let region = db.region_mut(CODE);
     region.set_bytes("rom", 0, 0, &rom);
 
     for bank in Bank::BANKS {
@@ -122,7 +123,7 @@ pub fn load_rom(
             .iter()
             .map(|rom| {
                 (
-                    rom.db.region(AddressSpace::Code).unwrap(),
+                    rom.db.region(CODE).unwrap(),
                     &rom.jump_tables[bank as usize],
                 )
             })
@@ -136,7 +137,7 @@ pub fn load_rom(
 
 pub fn auto_analyze(mut info: RomStaticAnalysisInfo, verbose: bool) -> Result<Db, io::Error> {
     let db = &mut info.db;
-    let region = db.region_mut(AddressSpace::Code);
+    let region = db.region_mut(CODE);
     for bank in Bank::BANKS {
         mark_interrupts(region, bank);
         mark_thunks(region, bank, &info.thunks[bank as usize]);
@@ -155,7 +156,7 @@ pub fn auto_analyze(mut info: RomStaticAnalysisInfo, verbose: bool) -> Result<Db
 
 pub fn process_heuristics(db: &mut Db, pc_trace: Option<Vec<u8>>) -> Result<(), io::Error> {
     let pc_trace = pc_trace.as_deref();
-    let region = db.region_mut(AddressSpace::Code);
+    let region = db.region_mut(CODE);
     if let Some(trace) = pc_trace {
         let mut new_roots = 0usize;
         for (addr, &marked) in trace.iter().enumerate() {
@@ -178,22 +179,22 @@ pub fn process_heuristics(db: &mut Db, pc_trace: Option<Vec<u8>>) -> Result<(), 
         eprintln!("pc-trace: {new_roots} new roots");
     }
     let push_roots = {
-        let region = db.region(AddressSpace::Code).unwrap();
+        let region = db.region(CODE).unwrap();
         push_dpx_mov_dptr_roots(region)
     };
     let mov_7fxx_roots = {
-        let region = db.region(AddressSpace::Code).unwrap();
+        let region = db.region(CODE).unwrap();
         mov_dptr_7fxx_movx_roots(region)
     };
     let mov_2x_roots = {
-        let region = db.region(AddressSpace::Code).unwrap();
+        let region = db.region(CODE).unwrap();
         mov_dptr_2x_roots(region)
     };
-    let region = db.region_mut(AddressSpace::Code);
+    let region = db.region_mut(CODE);
     apply_heuristic("PUSH DPx, PUSH DPx, MOV DPTR", region, push_roots);
     apply_heuristic("MOV DPTR, 0x7fxx, MOVX A, @DPTR", region, mov_7fxx_roots);
     apply_heuristic("MOV DPTR 2x", region, mov_2x_roots);
-    let usage = db.space_usage(AddressSpace::Code);
+    let usage = db.space_usage(CODE);
     eprintln!(
         "rom: code={} data={} undefined={} (total={})",
         usage.code,
@@ -241,7 +242,7 @@ fn mark_interrupts(region: &mut Region, bank: Bank) {
     for &(start, name) in INTERRUPT_VECTORS {
         let addr = bank.base() + start;
         region.auto_disassemble(addr).unwrap_success();
-        region.set_label(addr, &format!("{name}_{bank}"));
+        region.set_label(addr, &format!("{name}_{bank}"), LabelAttrs::default());
     }
 }
 
@@ -262,7 +263,11 @@ fn mark_thunks(region: &mut Region, bank: Bank, thunks: &[Thunk]) {
 }
 
 fn mark_thunk_jump_table(region: &mut Region, bank: Bank, entry_count: usize) {
-    region.set_label(bank.base() + JUMP_TABLE_BASE, "jump_table_base");
+    region.set_label(
+        bank.base() + JUMP_TABLE_BASE,
+        "jump_table_base",
+        LabelAttrs::default(),
+    );
     if entry_count == 0 {
         return;
     }
@@ -281,7 +286,7 @@ fn mark_thunk_jump_table(region: &mut Region, bank: Bank, entry_count: usize) {
 fn set_thunk_function(region: &mut Region, addr: u32, id: u8, prefix: &str) {
     region.set_function(Function {
         addr: PhysicalAddr {
-            space: AddressSpace::Code,
+            space: CODE,
             offset: addr,
         },
         name: format!("{prefix}_{id:02x}"),
@@ -471,7 +476,7 @@ fn mark_jump_tables(region: &mut Region, bank: Bank, info: &JumpTableStaticAnaly
         );
         region.set_function(Function {
             addr: PhysicalAddr {
-                space: AddressSpace::Code,
+                space: CODE,
                 offset: func.addr,
             },
             name: format!("jump_table_function_{:05X}", func.addr),
@@ -483,7 +488,11 @@ fn mark_jump_tables(region: &mut Region, bank: Bank, info: &JumpTableStaticAnaly
         for table in &func.tables {
             let bank = Bank::for_addr(table.base);
             eprintln!("{bank}: jump table: {}", fmt_addr(table.base));
-            region.set_label(table.base, &format!("jump_table_{:04X}", table.base));
+            region.set_label(
+                table.base,
+                &format!("jump_table_{:04X}", table.base),
+                LabelAttrs::default(),
+            );
 
             if let Some(range) = table.range {
                 for i in range.0..range.1 {

@@ -5,8 +5,10 @@ use std::path::{Path, PathBuf};
 use blaze_vt::machine::vt420::static_analysis::{Bank, auto_analyze, load_rom, process_heuristics};
 use clap::Parser;
 use i8051_disassembler::address::AddressValue;
+use i8051_disassembler::db::Db;
+use i8051_disassembler::platform::Platform;
+use i8051_disassembler::platform::i8051::{CODE, I8051};
 use i8051_disassembler::render::sdas::SdasWriter;
-use i8051_disassembler::{address::AddressSpace, db::Db};
 
 const BANK_SIZE: usize = 0x1_0000;
 const ROM_SIZE: usize = 2 * BANK_SIZE;
@@ -103,8 +105,8 @@ fn write_bank_asm(db: &Db, bank: Bank, output: &Path) -> io::Result<()> {
     let start = bank.base();
     let end = start + BANK_SIZE as u32;
     let mut writer = SdasWriter::default();
-    writer.write(AddressSpace::Code.area_header());
-    for line in db.render_range(AddressSpace::Code, start, end) {
+    writer.write(I8051.area_header(CODE).unwrap_or_default());
+    for line in db.render_range(CODE, start, end) {
         writer.write_line(&line);
     }
     fs::write(output, writer.into_string())?;

@@ -1466,9 +1466,9 @@ dependencies = [
 
 [[package]]
 name = "i8051"
-version = "0.24.0"
+version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2d7ac142118ad782f67042927968fe19113e4bba2b69660801db99ef7314147"
+checksum = "961f7ed215efe4b47c9c546ec1e6899e9491eee6483ca5dcb613ef80075a1b8c"
 dependencies = [
  "bytemuck",
  "i8051-proc-macro",
@@ -1478,9 +1478,9 @@ dependencies = [
 
 [[package]]
 name = "i8051-debug-tui"
-version = "0.24.0"
+version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b197e8f6a83b311b3b04a2316a251199456890f5989d437f9ba787bfedef2f69"
+checksum = "58daed3947655485f1a3c4bd102a275e8fab4b6362ae5d8c0cfb22b8bac2fcb0"
 dependencies = [
  "i8051",
  "ratatui",
@@ -1490,12 +1490,16 @@ dependencies = [
 
 [[package]]
 name = "i8051-disassembler"
-version = "0.24.0"
+version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6cb91e768011bbddb9ea49e19aabb1d533bf86efe5e0c7eefa600c635720970c"
+checksum = "a9078d8fd6ca7e4ed352bea69c052335a02eada3bd6e371aa2c8d1fa748d91a9"
 dependencies = [
  "i8051",
+ "i8051-proc-macro",
+ "i8051-script",
  "leiden-rs",
+ "m6805",
+ "mos-6502",
  "rangemap",
  "regex",
  "scattered-collect",
@@ -1505,14 +1509,20 @@ dependencies = [
 
 [[package]]
 name = "i8051-proc-macro"
-version = "0.24.0"
+version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8cc5ce5563cb89705bf411180e5ccedcdd1e6a5ce90547588c7ca91209f75c93"
+checksum = "640d363964ec42ed177cb4642201ad351f7b249da8724445fa82d7e7ea785705"
 dependencies = [
  "proc-macro2 1.0.106",
  "quote 1.0.45",
  "syn 2.0.118",
 ]
+
+[[package]]
+name = "i8051-script"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a489f79b6771b733e01425ae084c9a7989accb8fff3b2138adedc51ef1e9da83"
 
 [[package]]
 name = "id-arena"
@@ -1813,9 +1823,9 @@ dependencies = [
 
 [[package]]
 name = "linktime"
-version = "0.18.0"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "747e3b77d4686c927ec2052a2dcc3943e734a31b279c8f12b4332357ad9be5c8"
+checksum = "e69a9e2780a5e20ee9ef734fa17fa97ad02dd66face418654ede43ff0ade4c09"
 dependencies = [
  "ctor",
  "dtor",
@@ -1878,6 +1888,12 @@ checksum = "8a860605968fce16869fd239cf4237a82f3ac470723415db603b0e8b6c8d4fb9"
 dependencies = [
  "hashbrown 0.17.1",
 ]
+
+[[package]]
+name = "m6805"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e4e67171083e7586d250399190ffb8dcb2269f953e8e3a6fad020dc8720373d"
 
 [[package]]
 name = "mac_address"
@@ -1986,6 +2002,12 @@ dependencies = [
  "wasi",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "mos-6502"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bdae339dd7d77573cf2bfc6f50083c583e9267e1b22ffdc170d8ed3fc05f6e20"
 
 [[package]]
 name = "naga"
@@ -3225,9 +3247,9 @@ dependencies = [
 
 [[package]]
 name = "scattered-collect"
-version = "0.21.3"
+version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8bdd12e1c322169b156f50601d3171a34980821744f0281bfb07b90c642c5686"
+checksum = "fefb57ade8e9c6229a2fcfc6bb91310d3b448cd6d3a9caabfbcaa9ce630ef267"
 dependencies = [
  "ctor",
  "link-section",
