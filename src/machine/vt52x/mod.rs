@@ -11,9 +11,8 @@ use crate::machine::generic::rom::ROM;
 use crate::machine::generic::script::{Script, ScriptHost};
 use crate::machine::vt52x::memory::{Ports, RAM, Vt5xx};
 
-mod memory;
+pub mod memory;
 
-/// Instructions per video frame (about 70 Hz at roughly 1M instructions a second).
 const FRAME_INSTRUCTIONS: usize = 14_000;
 
 fn rom_model(rom: &[u8]) -> Vt5xx {
@@ -174,10 +173,6 @@ mod tests {
 
     use super::*;
 
-    /// Run the ROM and simulation and ensure that we boot to the passed-test screen
-    /// and setup comes up.
-    ///
-    /// We also check that the keyboard commands sent during diagnostics are fully parsed.
     #[test]
     fn test_boots() {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
