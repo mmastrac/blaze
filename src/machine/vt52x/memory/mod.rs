@@ -25,8 +25,6 @@ impl Vt5xx {
     }
 }
 
-#[derive(Default)]
-pub struct RAM {}
 const PAGE_SIZE: usize = 0x8000;
 const PAGE_COUNT: usize = 64;
 const DRAM_SIZE: usize = PAGE_SIZE * PAGE_COUNT;
