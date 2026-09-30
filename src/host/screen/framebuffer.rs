@@ -30,6 +30,8 @@ pub fn run(
     let system = Rc::new(RefCell::new(system));
 
     let system_clone = system.clone();
+    #[cfg(all(feature = "vram-dump", feature = "tui"))]
+    let mut terminal_keys = true;
     let stepper = move || {
         let mut system = system_clone.borrow_mut();
         if system.memory.mapper.disable_chargen() {
@@ -48,9 +50,18 @@ pub fn run(
         if let Some(code) = system.exit_code() {
             std::process::exit(code);
         }
-        #[cfg(feature = "vram-dump")]
+        #[cfg(all(feature = "vram-dump", feature = "tui"))]
         {
-            if crossterm::event::poll(Duration::from_millis(0)).unwrap() {
+            let ready = terminal_keys
+                && match crossterm::event::poll(Duration::from_millis(0)) {
+                    Ok(ready) => ready,
+                    Err(e) => {
+                        info!("No terminal input, VRAM dump and screenshot keys disabled: {e}");
+                        terminal_keys = false;
+                        false
+                    }
+                };
+            if ready {
                 let Ok(event) = crossterm::event::read() else {
                     return;
                 };

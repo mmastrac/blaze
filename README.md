@@ -53,6 +53,12 @@ cargo run --all-features --release -- --display=graphics --comm1 'exec /bin/sh'
 # Run the emulator with a text display and comm1 connected to "/bin/sh"
 cargo run --all-features --release -- --display=text --comm1 'exec /bin/sh'
 
+# The exec command is a single argument, so quote a command that has arguments
+cargo run --all-features --release -- --display=graphics --comm1 "exec '/bin/sh -l'"
+
+# Without --all-features (or --features embed-rom), pass the ROM with --rom
+cargo run --release -- --rom roms/vt420/23-068E9-00.bin --display=graphics
+
 # Run the emulator in WASM and display the video output in a browser
 cargo run-wasm --bin blaze-vt --no-default-features --features=wasm,demo --release
 ```
