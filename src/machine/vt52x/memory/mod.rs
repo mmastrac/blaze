@@ -6,8 +6,8 @@ use i8051::{CpuView, MemoryMapper, PortMapper};
 use tracing::trace;
 
 mod comm;
-mod vt51x;
-mod vt52x;
+pub(crate) mod vt51x;
+pub(crate) mod vt52x;
 
 use comm::CommChannel;
 
@@ -27,17 +27,67 @@ impl Vt5xx {
 
 const PAGE_SIZE: usize = 0x8000;
 const PAGE_COUNT: usize = 64;
-const DRAM_SIZE: usize = PAGE_SIZE * PAGE_COUNT;
+pub(crate) const DRAM_SIZE: usize = PAGE_SIZE * PAGE_COUNT;
 pub const LOW_XDATA_BASE: usize = 4 * PAGE_SIZE;
 
-/// Registers on page 0x7Fxx.
+pub const REG_BLIT_CMD: u8 = 0xC9;
+
 pub struct Registers {
     pub regs: [u8; 256],
+    pub blit_count: usize,
+    pub unknown_blits: std::collections::BTreeMap<u8, usize>,
+    pub blit_busy: usize,
 }
 
 impl Default for Registers {
     fn default() -> Self {
-        Self { regs: [0; 256] }
+        Self {
+            regs: [0; 256],
+            blit_count: 0,
+            unknown_blits: Default::default(),
+            blit_busy: 0,
+        }
+    }
+}
+
+impl Registers {
+    pub(crate) fn write(&mut self, reg: u8, value: u8, pc: u32) {
+        self.regs[reg as usize] = value;
+        self.blit_reg_write(reg, value, pc);
+    }
+}
+
+pub const FB_STRIDE: usize = 0x100;
+pub const FB_LINES: usize = 0x200;
+const MIN_ROW_LINES: usize = 8;
+pub const TEXT_ROWS: usize = FB_LINES / MIN_ROW_LINES;
+pub const SCREEN_CELLS: usize = TEXT_ROWS * TEXT_COLS;
+pub const TEXT_COLS: usize = FB_STRIDE;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TextCell {
+    pub ch: u8,
+    pub attr: u8,
+    pub continuation: bool,
+    pub soft_glyph: Option<u32>,
+    pub rendition: u8,
+    pub underline_line: u8,
+    pub colour: u8,
+    pub font_column: u8,
+}
+
+impl Default for TextCell {
+    fn default() -> Self {
+        Self {
+            ch: b' ',
+            attr: 0,
+            continuation: false,
+            soft_glyph: None,
+            rendition: 0,
+            underline_line: 0,
+            colour: 0x70,
+            font_column: 0,
+        }
     }
 }
 
@@ -45,6 +95,7 @@ pub struct RAM {
     pub regs: Registers,
     pub comm: [CommChannel; 3],
     pub dram: Vec<u8>,
+    pub text: Vec<TextCell>,
     pub model: Vt5xx,
     pub int1: bool,
 }
@@ -55,9 +106,24 @@ impl Default for RAM {
             regs: Registers::default(),
             comm: Default::default(),
             dram: vec![0; DRAM_SIZE],
+            text: vec![TextCell::default(); SCREEN_CELLS],
             model: Vt5xx::default(),
             int1: false,
         }
+    }
+}
+
+impl RAM {
+    pub(crate) fn window_format(&self, lower: bool) -> u8 {
+        if self.model.is_vt51x() {
+            vt51x::window_format(self)
+        } else {
+            vt52x::window_format(self, lower)
+        }
+    }
+
+    pub(crate) fn row_lines(&self, lower: bool) -> usize {
+        ((self.window_format(lower) & 0x0F) as usize + 1).max(MIN_ROW_LINES)
     }
 }
 
@@ -88,7 +154,6 @@ pub struct Ports {
     pub p3: u8,
     pub p3_read: u8,
     pub rom_bank: Rc<Cell<u8>>,
-    /// Selects the ROM bank pins (see `vt51x::rom_bank`).
     pub model: Vt5xx,
 }
 
