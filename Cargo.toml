@@ -28,7 +28,7 @@ i8051-disassembler.workspace = true
 tracing = "0.1.41"
 tracing-subscriber = "0.3.20"
 hex-literal = "1.1"
-lk201 = { path = "crates/lk201", version = "0.1.1" }
+lk201 = { path = "crates/lk201", version = "0.2.0" }
 ssu = { path = "crates/ssu", default-features = false, features = ["session-config"], version = "0.1.1" }
 
 # features=vram-dump
