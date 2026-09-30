@@ -18,6 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install system packages
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.92.0
@@ -25,7 +27,7 @@ jobs:
       - name: Check all feature combinations
         run: cargo hack check -p ssu --feature-powerset --no-dev-deps
       - name: Check server binary
-        run: cargo check -p ssu --no-default-features --features pty,server --bin server
+        run: cargo check -p ssu --no-default-features --features pty,server --bin ssu
       - name: Install WASM target
         run: rustup target add wasm32-unknown-unknown
       - name: Check WASM target
