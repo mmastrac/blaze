@@ -51,6 +51,8 @@ struct Terminal {
     render: Box<dyn FnMut(&mut [u8])>,
     /// Step function.
     step: Box<dyn FnMut()>,
+    /// Size the surface was last configured for.
+    surface_size: dpi::PhysicalSize<u32>,
 }
 
 impl Terminal {
@@ -69,6 +71,7 @@ impl Terminal {
             keyboard,
             render,
             step,
+            surface_size: dpi::PhysicalSize::new(0, 0),
         }
     }
 
@@ -82,6 +85,35 @@ impl Terminal {
 
     fn update_controls(&mut self) {
         update_keyboard(&self.input, self.keyboard.as_mut());
+    }
+
+    fn render_frame(&mut self) {
+        let PixelsState::Running { window, pixels } = &mut self.pixels else {
+            return;
+        };
+        const MAX_TEXTURE_SIZE: u32 = 4096;
+        let size = window.inner_size();
+        let size = dpi::PhysicalSize::new(
+            size.width.min(MAX_TEXTURE_SIZE),
+            size.height.min(MAX_TEXTURE_SIZE),
+        );
+        if size.width == 0 || size.height == 0 {
+            return;
+        }
+        if size != self.surface_size {
+            if let Err(err) = pixels.resize_surface(size.width, size.height) {
+                error!("Graphics: pixels.resize_surface: {err}");
+                return;
+            }
+            self.surface_size = size;
+        }
+        (self.render)(pixels.frame_mut());
+        if let Err(err) = pixels.render() {
+            error!("Graphics: pixels.render failed: {err}");
+            self.frame_policy.on_present_failed();
+        } else {
+            self.frame_policy.on_presented();
+        }
     }
 
     fn init_window(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
@@ -155,21 +187,6 @@ impl ApplicationHandler<Pixels<'static>> for Terminal {
         for _ in 0..self.frame_policy.updates_to_run {
             (self.step)();
         }
-        if self.frame_policy.will_redraw {
-            match &mut self.pixels {
-                PixelsState::Running { pixels, .. } => {
-                    (self.render)(pixels.frame_mut());
-                    if let Err(err) = pixels.render() {
-                        error!("Graphics: pixels.render failed: {err}");
-                        self.frame_policy.on_present_failed_retry();
-                    } else {
-                        self.frame_policy.on_presented();
-                    }
-                }
-                // The surface may not exist yet. Render when it does.
-                _ => {}
-            }
-        }
         let idle = self.frame_policy.plan_idle();
         event_loop.set_control_flow(idle.control_flow);
         if idle.request_redraw {
@@ -233,6 +250,7 @@ impl ApplicationHandler<Pixels<'static>> for Terminal {
                 error!("Graphics: pixels.resize_surface: {err}");
                 event_loop.exit();
             }
+            self.surface_size = size;
         }
         self.pixels = PixelsState::Running { window, pixels };
         if let Some(window) = self.window() {
@@ -253,23 +271,14 @@ impl ApplicationHandler<Pixels<'static>> for Terminal {
                 PixelsState::Initializing { size, .. } => {
                     *size = Some(resize);
                 }
-                PixelsState::Running { pixels, .. } => {
-                    // window_resized() returns physical size, but clamp to reasonable maximum
-                    // texture size (most GPUs support up to 16384, but we'll use 4096 to be safe)
-                    const MAX_TEXTURE_SIZE: u32 = 4096;
-                    let width = resize.width.min(MAX_TEXTURE_SIZE);
-                    let height = resize.height.min(MAX_TEXTURE_SIZE);
-                    if let Err(err) = pixels.resize_surface(width, height) {
-                        error!("Graphics: pixels.resize_surface: {err}");
-                        event_loop.exit();
-                    }
-                }
+                // The surface follows the window in render_frame, once per frame.
+                PixelsState::Running { window, .. } => window.request_redraw(),
             }
         }
 
         match event {
             WindowEvent::RedrawRequested => {
-                self.frame_policy.on_request_redraw();
+                self.render_frame();
             }
             WindowEvent::CloseRequested => {
                 event_loop.exit();
