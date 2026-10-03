@@ -35,7 +35,6 @@ pub struct FramePolicy {
 
     dirty: bool,
 
-    pub will_redraw: bool,
     pub updates_to_run: u32,
 
     #[allow(dead_code)]
@@ -57,7 +56,6 @@ impl FramePolicy {
             max_render_interval,
 
             dirty: true,
-            will_redraw: false,
             updates_to_run: 0,
 
             idle_render_enabled: false,
@@ -122,14 +120,11 @@ impl FramePolicy {
     pub fn on_presented(&mut self) {
         self.last_present = Instant::now();
         self.dirty = false;
-        self.will_redraw = false;
     }
 
-    pub fn on_present_failed_retry(&mut self) {
+    /// Try again after one render interval rather than at once.
+    pub fn on_present_failed(&mut self) {
+        self.last_present = Instant::now();
         self.dirty = true;
-    }
-
-    pub fn on_request_redraw(&mut self) {
-        self.will_redraw = true;
     }
 }
