@@ -45,7 +45,8 @@ graph TD
 P1:
 
  - 7: Unused (doesn't match schematic)
- - 6: Program Enable (active low) - worldwide vs north american setting
+ - 6: Program Enable (active low) - worldwide vs north american setting. Removes setup language and keyboard
+ dialects and modifies DA1 response. High is worldwide. 
  - 5: 232/423 Select (active high)
  - 4: DUART Reset (active high)
  - 0-3: Rotation Control (active high)

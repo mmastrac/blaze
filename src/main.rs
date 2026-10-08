@@ -33,6 +33,15 @@ enum Display {
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum Variant {
+    /// North America
+    NorthAmerica,
+    /// World-wide
+    #[default]
+    WorldWide,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 enum MachineType {
     /// VT420
     #[default]
@@ -114,6 +123,10 @@ struct Args {
     /// Machine type
     #[arg(long, default_value = "vt420")]
     machine: MachineType,
+
+    /// Hardware variant
+    #[arg(long, default_value = "world-wide")]
+    variant: Variant,
 
     /// Write a ROM-sized code hit map (byte per ROM offset: 00 = not hit, 01 = hit); merges with existing file
     #[cfg(all(feature = "pc-trace", not(target_arch = "wasm32")))]
@@ -306,6 +319,7 @@ fn run_vt420(
     if let Some(script) = script {
         vt420.script = script;
     }
+    vt420.set_north_american(args.variant == Variant::NorthAmerica);
     let mut system = System::new(vt420);
 
     let breakpoints = &mut system.system.breakpoints;

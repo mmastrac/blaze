@@ -206,6 +206,14 @@ impl System {
         })
     }
 
+    pub fn set_north_american(&mut self, north_american: bool) {
+        if north_american {
+            self.video_row.p1_read &= !0x40;
+        } else {
+            self.video_row.p1_read |= 0x40;
+        }
+    }
+
     pub(crate) fn step(&mut self, cpu: &mut Cpu) {
         self.instruction_count += 1;
         #[cfg(not(target_arch = "wasm32"))]
