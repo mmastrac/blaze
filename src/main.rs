@@ -111,6 +111,11 @@ struct Args {
     #[arg(long)]
     skip_diagnostics: bool,
 
+    /// Boot as the North American VT420 (VT420 AV1.x): no Set-Up language or keyboard dialect to choose, and no
+    /// national replacement character sets
+    #[arg(long)]
+    north_american: bool,
+
     /// Machine type
     #[arg(long, default_value = "vt420")]
     machine: MachineType,
@@ -306,6 +311,7 @@ fn run_vt420(
     if let Some(script) = script {
         vt420.script = script;
     }
+    vt420.set_north_american(args.north_american);
     let mut system = System::new(vt420);
 
     let breakpoints = &mut system.system.breakpoints;

@@ -45,7 +45,9 @@ graph TD
 P1:
 
  - 7: Unused (doesn't match schematic)
- - 6: Program Enable (active low) - worldwide vs north american setting
+ - 6: Program Enable (active low) - worldwide vs north american setting: read once at power-up into bit 18h.
+   Low is the North American model, VT420 AV1.x in Set-Up, without the Set-Up language and keyboard dialect choices
+   or the national replacement character sets (no 9 in DA1); high is the worldwide one, VT420 V1.x.
  - 5: 232/423 Select (active high)
  - 4: DUART Reset (active high)
  - 0-3: Rotation Control (active high)

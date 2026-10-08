@@ -206,6 +206,17 @@ impl System {
         })
     }
 
+    /// Boot as the North American VT420 rather than the worldwide one: P1.6, which the ROM reads once at power-up
+    /// into bit 18h, strapped low. Set-Up then names it VT420 AV1.x, offers neither a Set-Up language nor a keyboard
+    /// dialect, and DA1 leaves out 9 (national replacement character sets). Call it before the first step.
+    pub fn set_north_american(&mut self, north_american: bool) {
+        if north_american {
+            self.video_row.p1_read &= !0x40;
+        } else {
+            self.video_row.p1_read |= 0x40;
+        }
+    }
+
     pub(crate) fn step(&mut self, cpu: &mut Cpu) {
         self.instruction_count += 1;
         #[cfg(not(target_arch = "wasm32"))]
@@ -422,6 +433,21 @@ mod tests {
     /// We also check that the keyboard commands sent during diagnostics are fully parsed.
     #[test]
     fn test_boots() {
+        let screen = boot_to_setup(false);
+        assert!(screen.contains("Set-Up=English"), "{screen}");
+        assert!(!screen.contains("AV1."), "{screen}");
+    }
+
+    /// The North American model has no Set-Up language or keyboard dialect to choose, and says so in its version.
+    #[test]
+    fn test_boots_north_american() {
+        let screen = boot_to_setup(true);
+        assert!(screen.contains("VT420 AV1.3"), "{screen}");
+        assert!(!screen.contains("Set-Up=English"), "{screen}");
+    }
+
+    /// Boot to the passed-test screen, open Set-Up, and return the screen's text.
+    fn boot_to_setup(north_american: bool) -> String {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
         let rom = fs::read(format!("{manifest_dir}/roms/vt420/23-068E9-00.bin")).unwrap();
         let mut system = System::new(
@@ -433,6 +459,7 @@ mod tests {
             None,
         )
         .unwrap();
+        system.set_north_american(north_american);
 
         system.keyboard.start_collecting_commands();
 
@@ -460,6 +487,6 @@ mod tests {
 
         let screen = system.dump_screen_text();
         eprintln!("Screen text:\n{screen}\n");
-        assert!(screen.contains("Set-Up=English"), "{screen}");
+        screen
     }
 }
