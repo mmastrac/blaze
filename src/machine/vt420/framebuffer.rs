@@ -137,7 +137,8 @@ impl Display for System {
                         for x in 0..width {
                             let x_offset = (column as usize * width + x) * 8;
                             let mut pixel = font[y + render.start_row] & (1 << x) != 0;
-                            if attr.is_underline() && y == render.row_flags.row_height as usize - 1
+                            if attr.is_underline()
+                                && y + render.start_row == render.row_flags.underline_row as usize
                             {
                                 pixel = true;
                             }
@@ -155,7 +156,8 @@ impl Display for System {
                         for x in 0..width {
                             let x_offset = (column as usize * width + x) * 4;
                             let mut pixel = font[y + render.start_row] & (1 << x) != 0;
-                            if attr.is_underline() && y == render.row_flags.row_height as usize - 1
+                            if attr.is_underline()
+                                && y + render.start_row == render.row_flags.underline_row as usize
                             {
                                 pixel = true;
                             }

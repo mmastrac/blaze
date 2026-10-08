@@ -141,6 +141,14 @@ impl Mapper {
         ((self.get(6) & 0x0f) + 15) % 16 + 1
     }
 
+    pub fn underline_row_screen_1(&self) -> u8 {
+        self.get2(6) >> 4
+    }
+
+    pub fn underline_row_screen_2(&self) -> u8 {
+        self.get(6) >> 4
+    }
+
     pub fn is_status_bar_phase(&self) -> bool {
         self.get(6) & 0xf0 == 0xf0 || self.get2(6) & 0xf0 == 0xf0
     }
@@ -281,6 +289,7 @@ pub struct RowFlags {
     pub status_row: bool,
     pub screen_2: bool,
     pub row_height: u8,
+    pub underline_row: u8,
     pub font: u16,
 }
 
@@ -361,6 +370,11 @@ pub fn decode_vram<T>(
         } else {
             mapper.row_height_screen_1()
         };
+        let mut underline_row = if screen_2 {
+            mapper.underline_row_screen_2()
+        } else {
+            mapper.underline_row_screen_1()
+        };
 
         let mut font = (font & 0xf0) * 0x80;
         if status_row {
@@ -375,6 +389,7 @@ pub fn decode_vram<T>(
             // hardware.
             font = 0;
             row_height = if row_height != 16 { 12 } else { 16 };
+            underline_row = row_height - 1;
         } else if is_132 {
             font += 16;
         };
@@ -392,6 +407,7 @@ pub fn decode_vram<T>(
             double_height_bottom: row.is_double_height_bottom(),
             status_row,
             row_height,
+            underline_row,
             font,
         };
         row_callback(&mut data, row_idx as u8, row, row_flags);
