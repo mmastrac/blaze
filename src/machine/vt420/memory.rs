@@ -54,7 +54,7 @@ impl Ports {
             p1: 0b1111_1111,
             // Bit 0-3: 0 for rotation disable, 1 for rotation enable
             // Bit 5: 1 for enable 232/423 select (ie: mux to 423)
-            // Bit 6: 0 for the North American model (VT420 AV1.x), 1 for the worldwide one; see set_north_american
+            // Bit 6: disable 232/423 select + keyboard
             // Bit 7: 0 to allow DECSTUI (DCS for set terminal ID)
             p1_read: 0b1111_1111,
             p2: 0xff,
