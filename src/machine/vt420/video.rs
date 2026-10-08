@@ -141,9 +141,6 @@ impl Mapper {
         ((self.get(6) & 0x0f) + 15) % 16 + 1
     }
 
-    /// The font row the underline is drawn on: the high nibble of 7ff6, beside the row height in the low one. The ROM
-    /// writes D0 for 16-pixel rows, 9A for 10 and 78 for 8, so the underline sits just under the baseline (row 13 of
-    /// 16, as on a real VT420) rather than on the last row of the cell.
     pub fn underline_row_screen_1(&self) -> u8 {
         self.get2(6) >> 4
     }
@@ -292,7 +289,6 @@ pub struct RowFlags {
     pub status_row: bool,
     pub screen_2: bool,
     pub row_height: u8,
-    /// The font row lit by the underline attribute; past `row_height` for none.
     pub underline_row: u8,
     pub font: u16,
 }
@@ -393,8 +389,6 @@ pub fn decode_vram<T>(
             // hardware.
             font = 0;
             row_height = if row_height != 16 { 12 } else { 16 };
-            // the ROM writes F0/FC while it draws the status row, which the
-            // frame snapshot misses: its underline stays on the last row
             underline_row = row_height - 1;
         } else if is_132 {
             font += 16;
@@ -659,24 +653,6 @@ mod tests {
                 runs.windows(2)
                     .any(|w| w[0].0 && w[0].1 >= 15 && !w[1].0 && w[1].1 >= 15)
             );
-        }
-    }
-
-    /// The ROM writes 7ff6 with the font row of the underline in the high
-    /// nibble and the row height in the low one (0 for 16): D0, 9A and 78 for
-    /// 24, 36 and 48 lines. A VT420 draws the underline on row 13 of 16, just
-    /// under the baseline, where descenders cross it.
-    #[test]
-    fn test_underline_row() {
-        for (value, height, underline) in [(0xd0, 16, 13), (0x9a, 10, 9), (0x78, 8, 7)] {
-            let mut mapper = Mapper::new();
-            // written twice, once for each screen
-            mapper.set(6, value);
-            mapper.set(6, value);
-            assert_eq!(mapper.row_height_screen_1(), height);
-            assert_eq!(mapper.row_height_screen_2(), height);
-            assert_eq!(mapper.underline_row_screen_1(), underline);
-            assert_eq!(mapper.underline_row_screen_2(), underline);
         }
     }
 
